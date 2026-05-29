@@ -1,0 +1,316 @@
+---
+title: "Deploy Timeful on Vercel and Railway"
+sidebarTitle: "Vercel + Railway"
+description: "Host the Timeful frontend on Vercel and the Go backend on Railway with a managed MongoDB Atlas database — no servers to maintain."
+---
+
+Vercel + Railway is the recommended cloud-hosted deployment pattern for Timeful. The Vue 2 SPA is served from Vercel's global CDN, the Go API runs as a Docker container on Railway, and all data lives in a free MongoDB Atlas M0 cluster. Vercel automatically proxies `/api/*` requests to Railway so the browser only ever talks to a single origin, which keeps cookies working reliably.
+
+## Architecture
+
+| Layer | Service | Notes |
+|-------|---------|-------|
+| Frontend (Vue 2 SPA) | Vercel | Static build, `/api` rewrites to Railway |
+| Backend (Go + Gin) | Railway | Built from `Dockerfile.backend` |
+| Database (MongoDB) | MongoDB Atlas | Free M0 tier, hosted |
+
+## Prerequisites
+
+Before you start, make sure you have accounts on:
+
+<CardGroup cols={2}>
+  <Card icon="github" href="https://github.com" title="GitHub">
+    Fork or push the Timeful repository here so Vercel and Railway can deploy from it.
+  </Card>
+  <Card icon="triangle" href="https://vercel.com" title="Vercel">
+    Free hobby tier is sufficient for personal or small-team use.
+  </Card>
+  <Card icon="train" href="https://railway.app" title="Railway">
+    Sign up with your GitHub account for one-click repo access.
+  </Card>
+  <Card icon="leaf" href="https://cloud.mongodb.com" title="MongoDB Atlas">
+    The free M0 cluster supports up to 512 MB of data storage.
+  </Card>
+</CardGroup>
+
+You also need a **Google Cloud** account to create OAuth credentials for login and calendar integration.
+
+---
+
+## Deployment Steps
+
+<Steps>
+  <Step title="Set Up MongoDB Atlas">
+    1. Go to [cloud.mongodb.com](https://cloud.mongodb.com) and create a free account.
+    2. Click **Build a Database** → select the **M0 FREE** tier.
+    3. Choose a cloud provider and region closest to your users, then click **Create Deployment**.
+    4. Create a database user:
+       - Username: `timeful-admin` (or your choice)
+       - Password: click **Autogenerate Secure Password** and save it
+       - Click **Create Database User**
+    5. Configure network access:
+       - For testing: click **Add My Current IP Address**
+       - For production: click **Add IP Address** → enter `0.0.0.0/0` → **Allow Access from Anywhere**
+    6. Click **Finish and Close**.
+    7. Get your connection string:
+       - **Database** in the sidebar → **Connect** on your cluster → **Drivers**
+       - Copy the string and replace `<password>` with your database user's password
+
+    ```
+    mongodb+srv://timeful-admin:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
+    ```
+
+    <Note>
+      Save this connection string — you will paste it into Railway as `MONGO_URI` in Step 3.
+    </Note>
+  </Step>
+
+  <Step title="Create Google OAuth Credentials">
+    1. Go to [console.cloud.google.com](https://console.cloud.google.com).
+    2. Create a new project (or select an existing one).
+    3. Navigate to **APIs & Services** → **Credentials**.
+    4. If prompted, configure the OAuth consent screen:
+       - User Type: **External**
+       - App name: `Timeful`
+       - Fill in your support email and developer contact, then click **Save and Continue** through the remaining screens.
+    5. Click **+ CREATE CREDENTIALS** → **OAuth client ID**:
+       - Application type: **Web application**
+       - Name: `Timeful Production`
+    6. Add placeholder **Authorized JavaScript origins** (you will update these in Step 7):
+       ```
+       https://your-vercel-domain.vercel.app
+       ```
+    7. Add placeholder **Authorized redirect URIs**:
+       ```
+       https://your-vercel-domain.vercel.app/auth
+       ```
+    8. Click **Create** and save both the **Client ID** and **Client Secret**.
+
+    <Warning>
+      Do not commit the Client ID or Client Secret to version control. They go into Railway environment variables only.
+    </Warning>
+  </Step>
+
+  <Step title="Deploy the Backend to Railway">
+    1. Go to [railway.app](https://railway.app) and sign up with GitHub.
+    2. Click **New Project** → **Deploy from GitHub repo** and select your Timeful repository.
+    3. Railway detects the `railway.json` and uses `Dockerfile.backend` automatically. If it does not, go to **Settings → Build** and set the Dockerfile path to `Dockerfile.backend`.
+    4. Open **Settings → Variables** and add the following environment variables:
+
+    | Variable | Value |
+    |----------|-------|
+    | `MONGO_URI` | Your Atlas connection string from Step 1 |
+    | `MONGO_DB_NAME` | `schej-it` |
+    | `ENCRYPTION_KEY` | Output of `openssl rand -base64 32` |
+    | `CLIENT_ID` | Google OAuth Client ID from Step 2 |
+    | `CLIENT_SECRET` | Google OAuth Client Secret from Step 2 |
+    | `BASE_URL` | `https://your-vercel-domain.vercel.app` (placeholder) |
+    | `CORS_ALLOWED_ORIGINS` | `https://your-vercel-domain.vercel.app` (placeholder) |
+    | `SELF_HOSTED_PREMIUM` | `true` |
+
+    Generate the encryption key locally before pasting:
+
+    ```bash
+    openssl rand -base64 32
+    ```
+
+    5. Click **Deploy** and wait for the build to finish.
+    6. Go to **Settings → Networking → Generate Domain**.
+    7. Copy your Railway URL (e.g., `timeful-backend-production.up.railway.app`).
+    8. Verify the backend is healthy:
+
+    ```bash
+    curl https://YOUR_RAILWAY_URL/api/health
+    # Expected: {"status":"ok"}
+    ```
+  </Step>
+
+  <Step title="Update vercel.json with Your Railway Domain">
+    Edit `vercel.json` at the root of the repository and replace the destination URL with your Railway domain:
+
+    ```json
+    {
+      "buildCommand": "cd frontend && npm ci && npm run build",
+      "outputDirectory": "frontend/dist",
+      "installCommand": "cd frontend && npm ci",
+      "framework": null,
+      "rewrites": [
+        {
+          "source": "/api/:path*",
+          "destination": "https://timeful-backend-production.up.railway.app/api/:path*"
+        },
+        {
+          "source": "/(.*)",
+          "destination": "/index.html"
+        }
+      ]
+    }
+    ```
+
+    Commit and push this change to your repository before deploying to Vercel.
+  </Step>
+
+  <Step title="Update the Frontend Config">
+    Edit `frontend/public/config.js` (copy from `config.example.js` if it does not exist yet) and set your Google Client ID:
+
+    ```javascript
+    window.__TIMEFUL_CONFIG__ = {
+      googleClientId: "123456789-xxxxx.apps.googleusercontent.com",
+      microsoftClientId: "",  // Optional: add if using Outlook calendar
+      disableAnalytics: false,
+    }
+    ```
+
+    Commit and push this change.
+
+    <Note>
+      `googleClientId` must match the `CLIENT_ID` you set in Railway. `microsoftClientId` is only needed for Outlook calendar integration.
+    </Note>
+  </Step>
+
+  <Step title="Deploy the Frontend to Vercel">
+    1. Go to [vercel.com](https://vercel.com) and sign in with GitHub.
+    2. Click **Add New… → Project** and import your Timeful repository.
+    3. Configure build settings:
+       - **Framework Preset**: `Other`
+       - **Root Directory**: `/` (leave default)
+       - **Build Command**: `cd frontend && npm run build`
+       - **Output Directory**: `frontend/dist`
+       - **Install Command**: `cd frontend && npm ci`
+    4. Click **Deploy**.
+    5. Once the build completes, copy your Vercel URL (e.g., `timeful-xxxx.vercel.app`).
+  </Step>
+
+  <Step title="Update Google OAuth Redirect URIs">
+    Now that you have your real Vercel URL, go back to the Google Cloud Console and update your OAuth credentials:
+
+    1. **APIs & Services → Credentials** → click your OAuth 2.0 Client ID.
+    2. Replace the placeholder in **Authorized JavaScript origins**:
+       ```
+       https://your-actual-vercel-url.vercel.app
+       ```
+    3. Replace the placeholder in **Authorized redirect URIs**:
+       ```
+       https://your-actual-vercel-url.vercel.app/auth
+       ```
+    4. Click **Save**.
+  </Step>
+
+  <Step title="Update Railway Environment Variables">
+    Replace the placeholder `BASE_URL` and `CORS_ALLOWED_ORIGINS` values with your real Vercel URL:
+
+    1. Railway → your project → **Variables**.
+    2. Update both variables:
+
+    ```
+    BASE_URL=https://your-actual-vercel-url.vercel.app
+    CORS_ALLOWED_ORIGINS=https://your-actual-vercel-url.vercel.app
+    ```
+
+    Railway redeploys automatically when variables change.
+
+    <Warning>
+      Do not include a trailing slash in `CORS_ALLOWED_ORIGINS`. `https://example.vercel.app` is correct; `https://example.vercel.app/` will cause CORS errors.
+    </Warning>
+  </Step>
+
+  <Step title="Verify the Deployment">
+    Run through this checklist to confirm everything is working:
+
+    1. **Frontend loads** — visit `https://your-vercel-url.vercel.app`.
+    2. **API responds** — visit `https://your-vercel-url.vercel.app/api/auth/status` (should return JSON).
+    3. **Create an event** — test the full scheduling flow without logging in.
+    4. **Google login** — click **Sign in with Google** and complete the OAuth flow.
+    5. **Calendar integration** — connect Google Calendar and verify events appear in the availability view.
+  </Step>
+
+  <Step title="Custom Domain (Optional)">
+    **For Vercel (frontend):**
+
+    1. Vercel Dashboard → your project → **Settings → Domains**.
+    2. Add your domain (e.g., `timeful.app`).
+    3. At your DNS registrar, add:
+       ```
+       Type: CNAME
+       Name: @ (or www)
+       Value: cname.vercel-dns.com
+       ```
+
+    **For Railway (backend):**
+
+    1. Railway → **Settings → Networking → Custom Domain**.
+    2. Add `api.timeful.app` (or your subdomain).
+    3. At your DNS registrar, add:
+       ```
+       Type: CNAME
+       Name: api
+       Value: your-railway-domain.up.railway.app
+       ```
+
+    **After setting up custom domains**, update three things:
+
+    - `vercel.json` rewrites destination → `https://api.timeful.app/api/:path*`
+    - Railway env vars: `BASE_URL` and `CORS_ALLOWED_ORIGINS` → `https://timeful.app`
+    - Google OAuth: update authorized origins and redirect URIs to use your custom domain
+  </Step>
+</Steps>
+
+---
+
+## Environment Variables Reference
+
+The following variables are set in Railway under **Settings → Variables**:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MONGO_URI` | Yes | MongoDB Atlas connection string |
+| `MONGO_DB_NAME` | Yes | `schej-it` |
+| `ENCRYPTION_KEY` | Yes | Generate with `openssl rand -base64 32` |
+| `CLIENT_ID` | Yes* | Google OAuth Client ID |
+| `CLIENT_SECRET` | Yes* | Google OAuth Client Secret |
+| `BASE_URL` | Yes | Frontend URL, e.g. `https://timeful.app` |
+| `CORS_ALLOWED_ORIGINS` | Yes | Frontend URL — same value as `BASE_URL` |
+| `MICROSOFT_CLIENT_ID` | No | Azure OAuth Client ID (Outlook calendar) |
+| `MICROSOFT_CLIENT_SECRET` | No | Azure OAuth Client Secret (Outlook calendar) |
+| `SELF_HOSTED_PREMIUM` | No | `true` to unlock all premium features |
+
+*Required for Google login and Google Calendar integration
+
+---
+
+## Troubleshooting
+
+<Accordion title="CORS error in the browser console">
+  Verify that `CORS_ALLOWED_ORIGINS` in Railway matches your Vercel URL **exactly** — same protocol, same domain, no trailing slash.
+
+  ```
+  # Correct
+  CORS_ALLOWED_ORIGINS=https://timeful-xxxx.vercel.app
+
+  # Wrong (trailing slash)
+  CORS_ALLOWED_ORIGINS=https://timeful-xxxx.vercel.app/
+  ```
+
+  After changing the variable, wait for Railway to finish redeploying before retesting.
+</Accordion>
+
+<Accordion title="OAuth redirect mismatch error">
+  The redirect URI registered in Google Cloud Console must exactly match `https://your-domain/auth`. Common mismatches:
+
+  - Using `http://` instead of `https://`
+  - A stale placeholder URL still in the Console
+  - A custom domain configured in Vercel but not yet added to the OAuth credentials
+
+  Open **Google Cloud Console → APIs & Services → Credentials** and confirm the URI is correct.
+</Accordion>
+
+<Accordion title="API calls return 502 or 504 from Railway">
+  1. Open Railway → your project → **Deployments** and click the latest deploy to read the build and runtime logs.
+  2. Confirm `MONGO_URI` is correct and that your Atlas cluster's IP access list includes `0.0.0.0/0`.
+  3. Visit `https://YOUR_RAILWAY_URL/api/health` directly to check if the backend itself is up.
+  4. If the health check passes but Vercel is returning 502, confirm the `vercel.json` rewrite destination matches your Railway domain.
+</Accordion>
+
+<Accordion title="Login session does not persist after OAuth">
+  Timeful uses session cookies. When the frontend (Vercel) and backend (Railway) are on different domains, cookies require `SameSite=None; Secure`. This is handled automatically when both `BASE_URL` and `CORS_ALLOWED_ORIGINS` are set to the correct `https://` URLs. If login seems to succeed but the app immediately shows you as logged out, double-check that both Railway variables are set and that the backend is being accessed over HTTPS.
+</Accordion>

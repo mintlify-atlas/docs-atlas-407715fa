@@ -1,0 +1,170 @@
+---
+title: "Host the Timeful Backend on Modal"
+sidebarTitle: "Modal"
+description: "Run the Timeful Go backend as a serverless long-running container on Modal, keeping one warm instance ready at all times."
+---
+
+[Modal](https://modal.com) is a serverless cloud platform that can run the Timeful Go backend as a persistent HTTP service. The `modal_backend.py` entrypoint in the repository packages the Go binary built from `Dockerfile.backend` and exposes it over HTTPS. Modal handles infrastructure, scaling, and cold-start behaviour — you only pay for actual compute time.
+
+<Note>
+  This deployment covers **only the backend**. Your frontend is still deployed separately (e.g., on Vercel — see [Vercel + Railway](/deployment/vercel-railway)) and routes `/api/*` requests to the Modal service URL.
+</Note>
+
+## What This Deployment Covers
+
+| Component | Hosting |
+|-----------|---------|
+| Go backend (API server) | Modal — `modal_backend.py` |
+| Vue 2 frontend (SPA) | Separate — Vercel or self-hosted Nginx |
+| MongoDB database | MongoDB Atlas or self-hosted |
+
+## Files Involved
+
+| File | Purpose |
+|------|---------|
+| `modal_backend.py` | Modal app definition — builds the container and starts the Go server |
+| `Dockerfile.backend` | Backend-only Docker image used by Modal for the build |
+| `modal.env.example` | Template for the environment variables to inject as a Modal secret |
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card icon="terminal" href="https://modal.com/docs/reference/cli" title="Modal CLI">
+    Install with `pip install modal` and authenticate with `modal token new`.
+  </Card>
+  <Card icon="train" href="https://railway.app" title="Railway (or existing backend env)">
+    If you already deployed via Railway, copy the env vars from there into `modal.env`.
+  </Card>
+</CardGroup>
+
+You must have the Modal CLI installed and authenticated before running any `modal` commands:
+
+```bash
+pip install modal
+modal token new
+```
+
+---
+
+## Setup Steps
+
+<Steps>
+  <Step title="Create modal.env from the Template">
+    Copy the example file and fill in your values. These are the same environment variables used in the Railway deployment:
+
+    ```bash
+    cp modal.env.example modal.env
+    ```
+
+    Open `modal.env` and set the following:
+
+    ```bash
+    MONGO_URI=mongodb+srv://timeful-admin:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
+    MONGO_DB_NAME=schej-it
+    ENCRYPTION_KEY=<output of: openssl rand -base64 32>
+    CLIENT_ID=<your-google-client-id>.apps.googleusercontent.com
+    CLIENT_SECRET=<your-google-client-secret>
+    BASE_URL=https://your-frontend-domain.vercel.app
+    CORS_ALLOWED_ORIGINS=https://your-frontend-domain.vercel.app
+    SELF_HOSTED_PREMIUM=true
+    ```
+
+    <Warning>
+      Never commit `modal.env` to version control. It contains plaintext secrets. Add it to `.gitignore` before proceeding.
+    </Warning>
+  </Step>
+
+  <Step title="Create the Modal Secret">
+    Upload the environment file as a Modal secret named `timeful-backend-secrets`:
+
+    ```bash
+    modal secret create timeful-backend-secrets --from-dotenv modal.env
+    ```
+
+    Modal stores the values securely and injects them into the container at runtime. You can update individual values later from the [Modal dashboard](https://modal.com/secrets) without redeploying.
+  </Step>
+
+  <Step title="Deploy the Backend">
+    Run the deploy command from the repository root:
+
+    ```bash
+    modal deploy modal_backend.py
+    ```
+
+    Modal will:
+    1. Build the Docker image using `Dockerfile.backend`.
+    2. Push the image to Modal's internal registry.
+    3. Start the Go server and attach the `timeful-backend-secrets` secret.
+    4. Print the public HTTPS URL for your service.
+
+    Copy the URL — you will need it to configure `vercel.json` and Google OAuth.
+
+    ```
+    ✓ Created web endpoint => https://your-org--timeful-backend-web.modal.run
+    ```
+  </Step>
+</Steps>
+
+---
+
+## After Deployment
+
+Once Modal reports a live URL, update the following:
+
+1. **`vercel.json` rewrite** — replace the Railway destination with your Modal URL:
+
+   ```json
+   {
+     "rewrites": [
+       {
+         "source": "/api/:path*",
+         "destination": "https://your-org--timeful-backend-web.modal.run/api/:path*"
+       },
+       { "source": "/(.*)", "destination": "/index.html" }
+     ]
+   }
+   ```
+
+2. **Modal secret** — update `BASE_URL` and `CORS_ALLOWED_ORIGINS` to your Vercel frontend URL, then redeploy:
+
+   ```bash
+   modal secret create timeful-backend-secrets --from-dotenv modal.env
+   modal deploy modal_backend.py
+   ```
+
+3. **Google OAuth** — add the Modal URL to **Authorized redirect URIs** if you are not routing through Vercel.
+
+---
+
+## Warm Container Behaviour
+
+The `modal_backend.py` app sets `min_containers=1`, which keeps one container warm at all times. This means:
+
+- No cold-start latency for users.
+- A small amount of continuous compute cost even when idle.
+- Modal will still scale up additional containers if traffic spikes.
+
+---
+
+## Google Cloud Tasks (Optional)
+
+Google Cloud Tasks integration is optional. If you do not use it, leave `SERVICE_ACCOUNT_KEY_PATH` unset in `modal.env`. The backend starts and operates normally without it — scheduled reminders and background task processing simply will not run.
+
+To enable Cloud Tasks, generate a service account key JSON from the Google Cloud Console, upload it as an additional Modal secret or volume mount, and set:
+
+```bash
+SERVICE_ACCOUNT_KEY_PATH=/path/to/service-account-key.json
+```
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card icon="cloud" href="/deployment/vercel-railway" title="Vercel + Railway">
+    The standard cloud deployment combining Vercel frontend with Railway backend.
+  </Card>
+  <Card icon="box" href="/self-hosting/docker" title="Self-Hosting with Docker">
+    Run all three services locally with Docker Compose.
+  </Card>
+</CardGroup>

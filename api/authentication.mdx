@@ -1,0 +1,147 @@
+---
+title: "Authenticate with the Timeful API"
+sidebarTitle: "Authentication"
+description: "How Timeful session cookies work, the two OAuth sign-in flows, protected vs. public endpoints, and how to check your auth status."
+---
+
+Timeful uses **session-based authentication**. When a user signs in, the server sets an encrypted cookie named `session`. Every subsequent request from the same browser or HTTP client automatically carries that cookie, allowing the server to identify the caller without requiring a token header.
+
+Routes that require a valid session are wrapped with `middleware.AuthRequired()`. If the cookie is absent or the referenced user no longer exists in MongoDB, the middleware aborts the request with a `401 Unauthorized` response:
+
+```json
+{ "error": "not-signed-in" }
+```
+
+## Anonymous Use
+
+Several endpoints work **without** signing in:
+
+- `GET /api/events/:eventId` — view any event
+- `POST /api/events` — create an event as a guest
+- `POST /api/events/:eventId/response` — submit availability as a guest (pass `"guest": true`)
+- `DELETE /api/events/:eventId/response` — delete a guest response
+- `POST /api/events/:eventId/rename-user` — rename a guest respondent
+- `POST /api/events/:eventId/responded` — mark a remindee as responded
+
+## Sign-In Flow (Web)
+
+The web client uses Google OAuth's server-side authorization code flow.
+
+<Steps>
+  <Step title="Initiate Google OAuth">
+    The frontend redirects the user to Google's authorization endpoint. Google returns an authorization `code` and `scope` string to your redirect URI.
+  </Step>
+  <Step title="POST /api/auth/sign-in">
+    Exchange the code for a session by posting the authorization code to the server. The server calls Google's token endpoint, creates or updates the user record in MongoDB, and sets the session cookie in the response.
+
+    **Request body:**
+
+    | Field            | Type     | Required | Description                              |
+    |------------------|----------|----------|------------------------------------------|
+    | `code`           | string   | ✅       | Google OAuth authorization code          |
+    | `scope`          | string   | ✅       | OAuth scope string returned by Google    |
+    | `calendarType`   | string   | ✅       | `"google"` or `"outlook"`                |
+    | `timezoneOffset` | integer  | ✅       | Caller's UTC offset in minutes           |
+    | `eventsToLink`   | string[] | —        | Event IDs to associate with the new user |
+
+    **Response `200 OK`:** Returns the signed-in `User` object.
+  </Step>
+  <Step title="Include the Cookie">
+    All subsequent requests automatically include the `session` cookie (browsers handle this natively; CLI tools need `--cookie-jar` / `-c` flags).
+  </Step>
+</Steps>
+
+## Sign-In Flow (Mobile)
+
+Mobile apps obtain OAuth tokens directly (e.g. via the Google Sign-In SDK) and then post those tokens to:
+
+```http
+POST /api/auth/sign-in-mobile
+```
+
+**Request body:**
+
+| Field            | Type   | Required | Description                                          |
+|------------------|--------|----------|------------------------------------------------------|
+| `accessToken`    | string | ✅       | OAuth 2.0 access token                               |
+| `scope`          | string | ✅       | OAuth scope string                                   |
+| `idToken`        | string | ✅       | JWT ID token containing user profile claims          |
+| `expiresIn`      | int    | ✅       | Seconds until the access token expires               |
+| `refreshToken`   | string | ✅       | OAuth 2.0 refresh token                              |
+| `tokenOrigin`    | string | ✅       | Platform: `"ios"` or `"android"`                     |
+| `calendarType`   | string | ✅       | `"google"` or `"outlook"`                            |
+| `timezoneOffset` | int    | ✅       | Caller's UTC offset in minutes                       |
+
+**Response `200 OK`:** Returns an empty JSON object `{}`. The session cookie is set on the response.
+
+## CalendarType Values
+
+Defined in `models/calendar.go`:
+
+| JSON value   | Meaning                        |
+|--------------|--------------------------------|
+| `"google"`   | Google Calendar (OAuth 2.0)    |
+| `"outlook"`  | Microsoft Outlook (OAuth 2.0)  |
+| `"apple"`    | Apple Calendar (app password)  |
+
+## TokenOrigin Values
+
+Defined in `models/user.go`:
+
+| JSON value   | Meaning       |
+|--------------|---------------|
+| `"web"`      | Browser       |
+| `"ios"`      | iOS app       |
+| `"android"`  | Android app   |
+
+## Sign-Out
+
+```http
+POST /api/auth/sign-out
+```
+
+Clears the `userId` key from the session. No request body required.
+
+**Response `200 OK`:** Returns `{}`.
+
+## Auth Status
+
+```http
+GET /api/auth/status
+```
+
+<Note>
+This endpoint is protected by `middleware.AuthRequired()`. It returns `401` if the caller is not signed in.
+</Note>
+
+Returns `{}` with a `200` status when the session is valid. Use this to check whether a session cookie is still active.
+
+**Example:**
+
+```bash
+curl -s -c cookies.txt http://localhost:3002/api/auth/status
+```
+
+If the session is valid, the response is `200 {}`. If not, you receive:
+
+```json
+{ "error": "not-signed-in" }
+```
+
+## Example: Check Auth Status
+
+```bash
+# After signing in (session cookie stored in cookies.txt)
+curl -s \
+  -b cookies.txt \
+  http://localhost:3002/api/auth/status
+```
+
+## Protecting Custom Routes
+
+The `middleware.AuthRequired()` function is a standard Gin middleware. When it succeeds it stores the authenticated `*models.User` under the `"authUser"` context key, accessible in handlers via:
+
+```go
+userInterface, _ := c.Get("authUser")
+user := userInterface.(*models.User)
+```

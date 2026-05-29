@@ -1,0 +1,122 @@
+{
+  "projectType": "saas",
+  "projectName": "Timeful",
+  "projectDescription": "A self-hostable group scheduling and availability polling platform with calendar integration (Google, Outlook, Apple) built for the Columbia Math Department on top of the open-source Timeful (formerly Schej.it) project.",
+  "theme": "palm",
+  "primaryColor": "#279757",
+  "lightColor": "#8cccac",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Self-Hosting",
+            "pages": [
+              "self-hosting/docker",
+              "self-hosting/configuration",
+              "self-hosting/production",
+              "self-hosting/podman"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/availability-polls",
+              "features/calendar-integration",
+              "features/availability-groups",
+              "features/sign-up-forms",
+              "features/premium"
+            ]
+          },
+          {
+            "group": "Deployment Guides",
+            "pages": [
+              "deployment/vercel-railway",
+              "deployment/modal",
+              "deployment/updates-backups"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/security",
+              "operations/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/events",
+              "api/user",
+              "api/folders",
+              "api/auth"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Availability polling with specific dates or day-of-week modes",
+    "Google Calendar, Outlook, and Apple Calendar integration",
+    "Availability groups for real-time group scheduling",
+    "Sign-up form mode for slot-based event registration",
+    "Blind availability (responses hidden until event creator reveals them)",
+    "Email notifications and reminders for non-respondents",
+    "Max capacity per time slot with first-come-first-served logic",
+    "CSV export of availability data",
+    "Self-hosted premium features (no Stripe required)",
+    "Docker Compose deployment with multi-platform support (amd64/arm64)",
+    "Podman and systemd (Quadlet) support"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/sign-in",
+    "POST /api/auth/sign-out",
+    "GET /api/auth/status",
+    "GET /api/health",
+    "POST /api/events",
+    "GET /api/events/:eventId",
+    "PUT /api/events/:eventId",
+    "GET /api/events/:eventId/responses",
+    "POST /api/events/:eventId/response",
+    "DELETE /api/events/:eventId/response",
+    "POST /api/events/:eventId/duplicate",
+    "DELETE /api/events/:eventId",
+    "GET /api/user/profile",
+    "PATCH /api/user/name",
+    "PATCH /api/user/calendar-options",
+    "GET /api/user/events",
+    "GET /api/user/calendars",
+    "POST /api/user/add-google-calendar-account",
+    "POST /api/user/add-apple-calendar-account",
+    "POST /api/user/add-outlook-calendar-account",
+    "DELETE /api/user/remove-calendar-account",
+    "GET /api/user/folders",
+    "POST /api/user/folders",
+    "GET /api/user/folders/:folderId",
+    "PATCH /api/user/folders/:folderId",
+    "DELETE /api/user/folders/:folderId"
+  ]
+}

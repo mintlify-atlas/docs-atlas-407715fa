@@ -1,0 +1,391 @@
+---
+title: "User API: Profiles, Calendars, and Events"
+sidebarTitle: "User"
+description: "Manage user profiles, update names, connect calendar accounts, list events, assign folders, and search contacts — all under /api/user."
+---
+
+All endpoints in the User API are grouped under `/api/user` and require an authenticated session. Requests without a valid session cookie receive `401 Unauthorized`.
+
+<Warning>
+Every endpoint in this group is protected by `middleware.AuthRequired()`. Sign in first via [`POST /api/auth/sign-in`](/api/auth#sign-in) and include the session cookie on all requests.
+</Warning>
+
+---
+
+## Get Profile
+
+```http
+GET /api/user/profile
+```
+
+Returns the complete `User` object for the currently signed-in user, including the current month's event creation count.
+
+**Response `200 OK`:** A `User` object (see [User Object Reference](#user-object-reference)).
+
+```bash
+curl -s -b cookies.txt http://localhost:3002/api/user/profile
+```
+
+---
+
+## Update Name
+
+```http
+PATCH /api/user/name
+```
+
+Sets a custom display name for the user. Once a custom name is set, signing in again will **not** overwrite it with the name from the OAuth provider.
+
+<ParamField body="firstName" type="string" required>
+  New first name.
+</ParamField>
+
+<ParamField body="lastName" type="string" required>
+  New last name.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+```bash
+curl -s -X PATCH http://localhost:3002/api/user/name \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{ "firstName": "Alex", "lastName": "Smith" }'
+```
+
+---
+
+## Update Calendar Options
+
+```http
+PATCH /api/user/calendar-options
+```
+
+Persists the user's calendar autofill preferences. All fields are optional; only provided fields are updated.
+
+<ParamField body="bufferTime" type="object">
+  Buffer time settings applied when computing free slots.
+
+  <Expandable title="BufferTimeOptions">
+    <ParamField body="enabled" type="boolean">
+      Whether buffer time is active.
+    </ParamField>
+    <ParamField body="time" type="integer">
+      Buffer duration in minutes (default `15`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="workingHours" type="object">
+  Constrains calendar availability to a working-hours window.
+
+  <Expandable title="WorkingHoursOptions">
+    <ParamField body="enabled" type="boolean">
+      Whether working-hours filtering is active.
+    </ParamField>
+    <ParamField body="startTime" type="number">
+      Start hour in 24 h format (e.g. `9` for 9 AM, default `9`).
+    </ParamField>
+    <ParamField body="endTime" type="number">
+      End hour in 24 h format (e.g. `17` for 5 PM, default `17`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Get Events
+
+```http
+GET /api/user/events
+```
+
+Returns an array of all events the user owns, has responded to, or is an attendee of. Results are sorted newest-first. Soft-deleted events (`isDeleted: true`) are excluded.
+
+For availability groups (`type: "group"`), each event includes a `hasResponded` boolean indicating whether the user has already submitted availability.
+
+**Response `200 OK`:** Array of `Event` objects.
+
+```bash
+curl -s -b cookies.txt http://localhost:3002/api/user/events
+```
+
+---
+
+## Set Event Folder
+
+```http
+POST /api/user/events/:eventId/set-folder
+```
+
+Assigns an event to a folder, or removes it from any folder.
+
+<ParamField body="folderId" type="string">
+  ObjectID of the target folder. Pass `null` to remove the event from its current folder.
+</ParamField>
+
+**Response `200 OK`:** No body.
+
+```bash
+# Assign event to folder
+curl -s -X POST http://localhost:3002/api/user/events/64b3f1a2c9e77f001234abcd/set-folder \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{ "folderId": "64b3f1a2c9e77f001234ffff" }'
+
+# Remove from folder
+curl -s -X POST http://localhost:3002/api/user/events/64b3f1a2c9e77f001234abcd/set-folder \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{ "folderId": null }'
+```
+
+---
+
+## Get Calendar Events
+
+```http
+GET /api/user/calendars?timeMin=<ISO8601>&timeMax=<ISO8601>&accounts=<comma-separated>
+```
+
+Fetches calendar events from the user's connected accounts within the specified time window.
+
+**Query Parameters:**
+
+| Parameter | Type     | Required | Description                                                    |
+|-----------|----------|----------|----------------------------------------------------------------|
+| `timeMin` | ISO 8601 | ✅       | Start of the time window                                       |
+| `timeMax` | ISO 8601 | ✅       | End of the time window                                         |
+| `accounts`| string   | —        | Comma-separated list of `calendarAccountKey` strings to query  |
+
+**Response `200 OK`:** Map of `{ calendarAccountKey: { calendarEvents: [...], error: ... } }`.
+
+```bash
+curl -s -b cookies.txt \
+  "http://localhost:3002/api/user/calendars?timeMin=2025-09-01T00:00:00Z&timeMax=2025-09-07T23:59:59Z"
+```
+
+---
+
+## Add Google Calendar Account
+
+```http
+POST /api/user/add-google-calendar-account
+```
+
+Links an additional Google account to the user's profile using an OAuth authorization code.
+
+<ParamField body="code" type="string" required>
+  Google OAuth authorization code.
+</ParamField>
+
+<ParamField body="scope" type="string" required>
+  OAuth scope string.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Add Apple Calendar Account
+
+```http
+POST /api/user/add-apple-calendar-account
+```
+
+Links an Apple Calendar account using an Apple ID email and [app-specific password](https://support.apple.com/en-us/102654). Credentials are encrypted before storage.
+
+<ParamField body="email" type="string" required>
+  Apple ID email address.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  App-specific password generated from Apple ID settings.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`. Returns `401` with `{ "error": "invalid-credentials" }` if the credentials are rejected.
+
+---
+
+## Add Outlook Calendar Account
+
+```http
+POST /api/user/add-outlook-calendar-account
+```
+
+Links a Microsoft Outlook account using an OAuth authorization code.
+
+<ParamField body="code" type="string" required>
+  Microsoft OAuth authorization code.
+</ParamField>
+
+<ParamField body="scope" type="string" required>
+  OAuth scope string.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Remove Calendar Account
+
+```http
+DELETE /api/user/remove-calendar-account
+```
+
+Unlinks a calendar account from the user's profile.
+
+<ParamField body="email" type="string" required>
+  Email address of the account to remove.
+</ParamField>
+
+<ParamField body="calendarType" type="string" required>
+  Calendar type of the account: `"google"`, `"outlook"`, or `"apple"`.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Toggle Calendar Account
+
+```http
+POST /api/user/toggle-calendar
+```
+
+Enables or disables an entire calendar account for availability autofill.
+
+<ParamField body="email" type="string" required>
+  Email of the calendar account to toggle.
+</ParamField>
+
+<ParamField body="calendarType" type="string" required>
+  Calendar type: `"google"`, `"outlook"`, or `"apple"`.
+</ParamField>
+
+<ParamField body="enabled" type="boolean" required>
+  `true` to enable; `false` to disable.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Toggle Sub-Calendar
+
+```http
+POST /api/user/toggle-sub-calendar
+```
+
+Enables or disables an individual sub-calendar (e.g. a specific Google Calendar within an account) for availability autofill.
+
+<ParamField body="email" type="string" required>
+  Email of the parent calendar account.
+</ParamField>
+
+<ParamField body="calendarType" type="string" required>
+  Calendar type: `"google"`, `"outlook"`, or `"apple"`.
+</ParamField>
+
+<ParamField body="subCalendarId" type="string" required>
+  ID of the sub-calendar to toggle.
+</ParamField>
+
+<ParamField body="enabled" type="boolean" required>
+  `true` to enable; `false` to disable.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Search Contacts
+
+```http
+GET /api/user/searchContacts?query=<string>
+```
+
+Searches the user's Google contacts matching the query string. Useful for auto-completing attendee email fields.
+
+**Query Parameters:**
+
+| Parameter | Type   | Required | Description              |
+|-----------|--------|----------|--------------------------|
+| `query`   | string | ✅       | Search term              |
+
+**Response `200 OK`:** Array of matching `User`-shaped objects (name, email, picture).
+
+```bash
+curl -s -b cookies.txt \
+  "http://localhost:3002/api/user/searchContacts?query=alice"
+```
+
+---
+
+## Delete User
+
+```http
+DELETE /api/user
+```
+
+Permanently deletes the signed-in user's account from MongoDB and clears their session.
+
+**Response `200 OK`:** Returns `{}`.
+
+<Warning>
+This action is irreversible. The user's events and responses are **not** automatically removed.
+</Warning>
+
+---
+
+## User Object Reference
+
+<ResponseField name="_id" type="string">
+  MongoDB ObjectID of the user.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Primary email address from the OAuth provider.
+</ResponseField>
+
+<ResponseField name="firstName" type="string">
+  First name (from OAuth or custom override).
+</ResponseField>
+
+<ResponseField name="lastName" type="string">
+  Last name (from OAuth or custom override).
+</ResponseField>
+
+<ResponseField name="picture" type="string">
+  Profile picture URL from the OAuth provider.
+</ResponseField>
+
+<ResponseField name="timezoneOffset" type="integer">
+  User's UTC offset in minutes at time of last sign-in.
+</ResponseField>
+
+<ResponseField name="hasCustomName" type="boolean">
+  When `true`, OAuth sign-in will not overwrite `firstName`/`lastName`.
+</ResponseField>
+
+<ResponseField name="calendarAccounts" type="object">
+  Map of `{ "email_CALENDARTYPE": CalendarAccount }`. Keys are constructed as `{email}_{CALENDARTYPE}` (e.g. `alice@gmail.com_google`).
+</ResponseField>
+
+<ResponseField name="primaryAccountKey" type="string">
+  The `calendarAccountKey` of the account used during initial sign-in.
+</ResponseField>
+
+<ResponseField name="calendarOptions" type="object">
+  Global `CalendarOptions` containing `bufferTime` and `workingHours` settings.
+</ResponseField>
+
+<ResponseField name="isPremium" type="boolean">
+  Whether the user has an active premium subscription (or `SELF_HOSTED_PREMIUM=true` is set).
+</ResponseField>
+
+<ResponseField name="numEventsCreated" type="integer">
+  Number of events created this calendar month (computed at request time, not stored).
+</ResponseField>

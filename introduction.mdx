@@ -1,0 +1,73 @@
+---
+title: "Timeful: Self-Hosted Group Scheduling Platform"
+sidebarTitle: "Introduction"
+description: "Timeful is an open-source, self-hostable availability polling platform with calendar integration, built for teams who need full data ownership."
+---
+
+Timeful (formerly Schej.it) is a free, open-source group scheduling platform that makes it easy for teams to find the best time to meet. Users fill in their availability across date ranges or recurring day-of-week windows; Timeful overlays every response and highlights the windows where the most people — or a specific subset of people — are free. This fork, maintained for the **Columbia Math Department**, ships with department-specific defaults such as a one-hour meeting duration and per-slot capacity limits on sign-up forms.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Availability Polls" icon="calendar-check" href="/features/availability-polls">
+    Create polls for specific dates or recurring day-of-week schedules. Respondents mark "Available" or "If needed" slots; the heatmap instantly shows the best overlap.
+  </Card>
+  <Card title="Calendar Integration" icon="calendar-days" href="/features/calendar-integration">
+    Connect Google Calendar, Microsoft Outlook, or Apple Calendar so respondents' busy times pre-fill automatically — no manual entry required.
+  </Card>
+  <Card title="Availability Groups" icon="users" href="/features/availability-groups">
+    Create persistent groups that display real-time calendar availability for all members, making it trivial to see who is free right now.
+  </Card>
+  <Card title="Sign-Up Forms" icon="pen-to-square" href="/features/sign-up-forms">
+    Turn any event into a structured sign-up sheet with named time blocks and optional per-slot capacity limits — ideal for office hours or tutoring sessions.
+  </Card>
+  <Card title="Premium Features" icon="star" href="/features/premium">
+    All premium capabilities — response visibility controls, CSV export, duplicate polls, and email reminders — are automatically unlocked for every self-hosted deployment.
+  </Card>
+  <Card title="API & Swagger" icon="code" href="/api/overview">
+    A documented REST API is served at <code>/api</code> with interactive Swagger UI available at <code>/swagger/index.html</code>.
+  </Card>
+</CardGroup>
+
+## Columbia Math Department Fork
+
+This repository is a fork of the upstream [timeful.app](https://timeful.app) project tailored for Columbia University's Mathematics Department. It adds:
+
+- **1-hour default duration** — new availability polls default to 60-minute slots rather than 30 minutes, matching department seminar conventions.
+- **Per-slot capacity limits** — sign-up form blocks expose a `capacity` field so instructors can cap the number of students per office-hours slot.
+
+<Note>
+  Upstream features, bug fixes, and Docker images are inherited from
+  `ghcr.io/lillenne/timeful.app/backend:latest` and
+  `ghcr.io/lillenne/timeful.app/frontend:latest`. Pull the latest images with
+  `make pull-ghcr` to stay current.
+</Note>
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | Vue 2 · Vuetify · TailwindCSS |
+| **Backend** | Go 1.20 · Gin framework |
+| **Database** | MongoDB 6.0 |
+| **Infrastructure** | Docker Compose · Nginx |
+
+The backend exposes a JSON API on port `3002`, the frontend is a Vue 2 SPA served by Nginx, and all persistent data lives in a MongoDB volume. In the default Docker Compose configuration the entire stack runs as three containers on a private bridge network with only the frontend port exposed to the host.
+
+## License
+
+Timeful is released under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. Any deployment that makes the service available over a network must make the corresponding source code available. See the `LICENSE` file in the repository root for full terms.
+
+## Where to Go Next
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get a local instance running with Docker Compose in under 5 minutes.
+  </Card>
+  <Card title="Docker Self-Hosting" icon="docker" href="/self-hosting/docker">
+    Full guide covering production deployment, reverse proxies, custom domains, and backup procedures.
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api/overview">
+    Browse all REST endpoints, request/response schemas, and authentication flow.
+  </Card>
+</CardGroup>

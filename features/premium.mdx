@@ -1,0 +1,142 @@
+---
+title: "Premium Features Unlocked for Self-Hosted Timeful"
+sidebarTitle: "Premium Features"
+description: "Every premium Timeful feature is automatically unlocked on self-hosted deployments — no Stripe account or payment processing required out of the box."
+---
+
+On the public [timeful.app](https://timeful.app) hosted service, certain advanced features are gated behind a paid subscription managed through Stripe. When you self-host Timeful, **all of those features are automatically unlocked for every user** — no payment, no subscription management, and no Stripe configuration required. This is controlled by the `SELF_HOSTED_PREMIUM` environment variable, which defaults to `true` in the provided Docker Compose configuration.
+
+## What's Included
+
+<CardGroup cols={2}>
+  <Card title="Blind Availability" icon="eye-slash" href="/features/availability-polls">
+    Hide participant responses from each other until the poll creator chooses to reveal them. Prevents anchoring bias so everyone marks their honest availability before seeing what others said.
+  </Card>
+  <Card title="Email Notifications & Reminders" icon="envelope" href="/features/availability-polls">
+    Send email reminders to a list of remindees, and receive a summary email once a configurable number of responses have been collected.
+  </Card>
+  <Card title="Duplicating Polls" icon="copy" href="/features/availability-polls">
+    Duplicate any poll you own, with the option to copy existing availability responses into the new poll. Saves time for recurring scheduling needs.
+  </Card>
+  <Card title="CSV Export" icon="file-csv" href="/features/availability-polls">
+    Export the full availability matrix as a CSV file named after your poll. Two formats available: by time slot (columns are participants) or by person (columns are available times).
+  </Card>
+  <Card title="Availability Groups" icon="users" href="/features/availability-groups">
+    Persistent groups that display real-time calendar availability for your whole team — no new poll needed each time you need to find a shared window.
+  </Card>
+  <Card title="Only Show Responses to Creator" icon="lock" href="/features/availability-polls">
+    Restrict the availability overlay so only the poll creator can see who responded and when — participants can submit but cannot view each other's availability.
+  </Card>
+  <Card title="Sign-Up Forms" icon="pen-to-square" href="/features/sign-up-forms">
+    Let participants claim specific pre-defined time slots instead of marking general availability. Ideal for office hours, advisor meetings, and lab bookings.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+### The `SELF_HOSTED_PREMIUM` Environment Variable
+
+The backend checks `SELF_HOSTED_PREMIUM` on startup using the `IsSelfHostedPremiumEnabled()` utility:
+
+```go
+// From server/utils/utils.go
+func IsSelfHostedPremiumEnabled() bool {
+    value := os.Getenv("SELF_HOSTED_PREMIUM")
+    return value == "true" || value == "1" || value == "yes"
+}
+```
+
+Any truthy value (`"true"`, `"1"`, or `"yes"`) enables the override. When enabled, every user who signs in has their `isPremium` flag automatically set to `true`, regardless of their Stripe subscription status. This happens at three points in the user lifecycle:
+
+- When a user is **fetched** from the database (`db.GetUserById`)
+- When a user is **created** for the first time (new sign-up)
+- When a user's **OAuth token is refreshed** (re-authentication)
+
+```go
+// From server/db/users.go (paraphrased)
+// Override isPremium if self-hosted premium is enabled
+if utils.IsSelfHostedPremiumEnabled() {
+    user.IsPremium = &trueVal
+}
+```
+
+This means Stripe is never consulted for feature gating — the premium check in every route handler sees `isPremium = true` and proceeds.
+
+### Default Configuration in Docker Compose
+
+The `.env.example` file ships with `SELF_HOSTED_PREMIUM=true` pre-set:
+
+```bash
+# From .env.example
+
+# Self-Hosted Premium Features (Optional - for self-hosted deployments)
+# When set to "true", automatically unlocks premium features for all users
+SELF_HOSTED_PREMIUM=true
+```
+
+You do not need to change this for a standard Columbia Math Department deployment.
+
+### The `isPremium` Field on Users
+
+Each `User` document has an `isPremium` field in MongoDB:
+
+```go
+// From server/models/user.go
+IsPremium        *bool   `json:"isPremium" bson:"isPremium,omitempty"`
+StripeCustomerId *string `json:"stripeCustomerId" bson:"stripeCustomerId,omitempty"`
+```
+
+When `SELF_HOSTED_PREMIUM=true`, the `isPremium` field is overridden at the application layer on every read — the value stored in MongoDB is irrelevant. This means you can safely toggle `SELF_HOSTED_PREMIUM` without needing to run a database migration.
+
+## Optional: Enabling Stripe for Paid Tiers
+
+If you want to charge users for premium features on your self-hosted deployment (for example, offering Timeful as a paid service to other departments), you can:
+
+1. Set `SELF_HOSTED_PREMIUM=false` in your `.env` file.
+2. Configure a Stripe account and set `STRIPE_API_KEY`:
+
+```bash
+# From .env.example
+STRIPE_API_KEY=sk_live_...
+SELF_HOSTED_PREMIUM=false
+```
+
+With Stripe configured, the `/api/stripe/*` routes become active. When a user completes a Stripe checkout, the webhook handler sets `isPremium: true` on their MongoDB document. When a subscription lapses or is cancelled, `isPremium` is set back to `false`.
+
+<Warning>
+  When `SELF_HOSTED_PREMIUM=false` and no `STRIPE_API_KEY` is configured, premium features will be unavailable to all users. Make sure at least one of the two is set appropriately for your deployment.
+</Warning>
+
+<Note>
+  For most Columbia Math Department deployments the correct configuration is simply `SELF_HOSTED_PREMIUM=true` (the default). Stripe integration is only needed if you intend to charge users for access.
+</Note>
+
+## Checking Premium Status in the API
+
+You can verify that premium is correctly enabled by fetching the current user profile after signing in:
+
+```bash
+curl -b cookies.txt https://your-timeful-instance.com/api/user/profile
+```
+
+The response will include `"isPremium": true` for all users when `SELF_HOSTED_PREMIUM=true`:
+
+```json
+{
+  "_id": "...",
+  "email": "faculty@columbia.edu",
+  "firstName": "Ada",
+  "lastName": "Lovelace",
+  "isPremium": true,
+  ...
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Self-Hosting Configuration" icon="gear" href="/self-hosting/configuration">
+    Full reference for all environment variables, including SELF_HOSTED_PREMIUM and STRIPE_API_KEY.
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/self-hosting/docker">
+    Step-by-step guide to running Timeful with Docker Compose, including the default premium configuration.
+  </Card>
+</CardGroup>

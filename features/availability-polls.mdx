@@ -1,0 +1,167 @@
+---
+title: "Availability Polls: Find the Best Meeting Time"
+sidebarTitle: "Availability Polls"
+description: "Create a poll, share the link, and let participants mark their availability. Timeful finds the overlap so you can pick the best time to meet."
+---
+
+Availability polls are the core feature of Timeful. Create a poll in seconds, share the link with your group, and watch the availability grid fill in as participants respond. Timeful highlights the times when the most people — or the specific people you care about — are free, so scheduling a meeting takes minutes instead of days of back-and-forth email.
+
+## Event Types
+
+Every poll is stored in MongoDB as an `Event` document with a `type` field that controls how dates and times are presented to participants.
+
+<CardGroup cols={3}>
+  <Card title="Specific Dates" icon="calendar-days" href="/features/availability-polls">
+    Pick one or more concrete calendar dates (e.g., Mon Dec 9 – Fri Dec 13). Best for scheduling a one-time meeting within a known window.
+  </Card>
+  <Card title="Day of Week" icon="calendar-week" href="/features/availability-polls">
+    Pick recurring weekdays without pinning to specific dates (e.g., every Monday and Wednesday). Best for finding a standing weekly slot.
+  </Card>
+  <Card title="Availability Group" icon="users" href="/features/availability-groups">
+    A persistent group that reads live calendar data from all members in real time. No separate poll needed — see team availability at any moment.
+  </Card>
+</CardGroup>
+
+The `type` field maps directly to the Go constants in `server/models/event.go`:
+
+```go
+const (
+    SPECIFIC_DATES EventType = "specific_dates"
+    DOW            EventType = "dow"
+    GROUP          EventType = "group"
+)
+```
+
+## Creating a Poll
+
+<Steps>
+  <Step title="Choose an event type">
+    Select **Specific Dates** or **Day of Week** from the new-event dialog. (Availability Groups have their own creation flow — see [Availability Groups](/features/availability-groups).)
+  </Step>
+  <Step title="Set a name and optional details">
+    Give the poll a descriptive name (required). Optionally add a **description** (up to 5,000 characters) and a **location** (up to 500 characters).
+  </Step>
+  <Step title="Pick dates or days">
+    For Specific Dates events, select the date range on the calendar picker. For Day-of-Week events, toggle which days of the week to include and decide whether the week should start on Monday or Sunday.
+  </Step>
+  <Step title="Configure timing options">
+    Set the duration of the desired meeting slot and choose a time increment. Then share the generated link with participants.
+  </Step>
+</Steps>
+
+## Poll Configuration Options
+
+The `CreateEventRequest` struct (in `server/routes/events.go`) documents every field you can set when creating or editing a poll. The most useful options are explained below.
+
+### Timing
+
+| Field | Type | Description |
+|---|---|---|
+| `duration` | `float32` | Length of the meeting in hours (e.g., `1.5` for 90 minutes). Required. |
+| `timeIncrement` | `int` | Grid resolution in minutes. Options: **15**, **30**, or **60**. This fork defaults to **60 minutes** (changed from the upstream 15-minute default). |
+| `hasSpecificTimes` | `bool` | When `true`, participants select hour-by-hour time blocks. When `false` (days-only mode), participants mark whole days with no time component. |
+| `daysOnly` | `bool` | Enables days-only mode — the poll collects date availability without any time-of-day granularity. |
+| `startOnMonday` | `bool` | For DOW events, whether the week grid starts on Monday instead of Sunday. |
+
+<Note>
+  The **60-minute default time increment** is a Columbia Math Department customization from `FEATURE_PLAN.md`. All three increment options (15 min, 30 min, 60 min) remain selectable in the UI; only the default has changed.
+</Note>
+
+### Visibility & Privacy
+
+| Field | Type | Description |
+|---|---|---|
+| `blindAvailabilityEnabled` | `bool` | **Blind availability** — responses are hidden from other participants until the poll creator chooses to reveal them. Prevents anchoring bias when gathering honest availability. Premium feature, automatically unlocked for self-hosted deployments. |
+
+### Notifications & Reminders
+
+| Field | Type | Description |
+|---|---|---|
+| `notificationsEnabled` | `bool` | Sends email notifications and reminders to the remindees list. |
+| `remindees` | `[]string` | List of email addresses to remind. Each remindee is stored as a `Remindee` object with `email`, `taskIds` (scheduled email task IDs), and `responded` fields. |
+| `sendEmailAfterXResponses` | `int` | Sends the poll creator an email summary once this many participants have responded. Useful for polls with a hard attendance threshold. |
+| `collectEmails` | `bool` | Prompts guest participants (non-logged-in users) to enter their email address when submitting availability. |
+
+<Info>
+  Email features require `GMAIL_APP_PASSWORD` and `SCHEJ_EMAIL_ADDRESS` to be set in your `.env` file. See [Configuration](/self-hosting/configuration) for setup instructions.
+</Info>
+
+### Capacity Limits (Columbia Math Department Addition)
+
+The `maxCapacityPerSlot` field is a **Columbia Math Department customization** that enforces a maximum number of participants per individual time slot.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `maxCapacityPerSlot` | `*int` | `4` | Maximum number of people who can be marked available for a single time slot. `nil` means unlimited. |
+
+How it works:
+
+- When a slot reaches capacity, the UI grays it out and shows a "Slot full" tooltip to additional participants.
+- The slot count is displayed as **X/Y** (e.g., `3/4`) in the respondents list.
+- The backend validates capacity on every `POST /api/events/:eventId/response` submission and returns `HTTP 400` with the list of blocked timestamps if any slot would be exceeded.
+- The rule is **first come, first served**: existing selections are always preserved even if the slot later fills up.
+
+```go
+// From server/models/event.go
+MaxCapacityPerSlot *int `json:"maxCapacityPerSlot" bson:"maxCapacityPerSlot,omitempty"`
+```
+
+<Warning>
+  When a participant tries to submit availability that includes one or more full slots, the entire submission is rejected. The frontend surfaces an error message listing the conflicting timestamps so the participant can deselect them and resubmit.
+</Warning>
+
+## Responding to a Poll
+
+Participants open the shared link and drag across the grid to mark their availability. Two availability states are supported:
+
+| State | Meaning |
+|---|---|
+| **Available** | Participant is free and prefers this time. |
+| **If Needed** | Participant can make it work but does not prefer this time. |
+
+Both states are sent as arrays of ISO timestamps in the `POST /api/events/:eventId/response` payload:
+
+```json
+{
+  "guest": false,
+  "availability": ["2024-12-09T14:00:00Z", "2024-12-09T15:00:00Z"],
+  "ifNeeded": ["2024-12-09T16:00:00Z"]
+}
+```
+
+Guest participants (not signed in) also provide `name` and `email` fields.
+
+## Scheduling Across Timezones
+
+Each user's `timezoneOffset` is stored on the `User` document and applied automatically when rendering the availability grid. Participants in different time zones all see the grid in their local time, and Timeful converts everything to UTC for storage — so the overlap view always reflects real simultaneous availability.
+
+## Exporting Availability as CSV
+
+Once responses are in, the poll creator can export a CSV of the full availability matrix. Two formats are available from the respondents panel:
+
+- **By time slot** — each row is a time slot; columns are participant names with available / if-needed values.
+- **By person** — each row is a participant; the second column lists all their available date/time ranges.
+
+The CSV file is named after the poll (`{event.name}.csv`) and downloaded client-side. CSV export is a premium feature and is automatically available on all self-hosted deployments. See [Premium Features](/features/premium).
+
+## Duplicating a Poll
+
+Poll creators can duplicate any poll they own via `POST /api/events/:eventId/duplicate`. The request body accepts:
+
+```json
+{
+  "eventName": "Seminar Scheduling – Spring 2025",
+  "copyAvailability": true
+}
+```
+
+When `copyAvailability` is `true`, all existing responses are copied into the new poll. When `false`, the new poll starts empty. A fresh short ID is generated for the duplicate. Duplication is a premium feature; see [Premium Features](/features/premium).
+
+<CardGroup cols={2}>
+  <Card title="Calendar Integration" icon="calendar-circle-user" href="/features/calendar-integration">
+    Let participants auto-fill their availability from Google, Outlook, or Apple Calendar.
+  </Card>
+  <Card title="Sign-Up Forms" icon="pen-to-square" href="/features/sign-up-forms">
+    Switch to claim-a-slot mode so participants reserve specific time blocks rather than just marking availability.
+  </Card>
+</CardGroup>

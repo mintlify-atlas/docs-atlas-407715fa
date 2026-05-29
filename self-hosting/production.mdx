@@ -1,0 +1,240 @@
+---
+title: "Run Timeful in Production with a Reverse Proxy"
+sidebarTitle: "Production"
+description: "Configure Nginx or Caddy in front of Timeful, set a custom domain, enable HTTPS, and update your Google OAuth redirect URIs for production."
+---
+
+Running Timeful on `localhost:3002` is fine for local evaluation, but production deployments need TLS termination, a real domain name, and correctly registered OAuth redirect URIs. This page walks through every step using either Nginx or Caddy as the reverse proxy, then covers the `.env` changes required to tie everything together.
+
+## System Requirements
+
+| | Minimum | Recommended |
+|--|---------|-------------|
+| **CPU** | 1 vCPU | 2 vCPUs |
+| **RAM** | 1 GB | 2 GB |
+| **Disk** | 10 GB | 20 GB+ |
+| **OS** | Linux (kernel ≥ 4.15) | Ubuntu 22.04 LTS / Debian 12 |
+| **Docker** | 20.10 | Latest stable |
+| **Docker Compose** | v2.0 | Latest stable |
+
+## Reverse Proxy Configuration
+
+The Timeful Docker stack exposes a single port — `3002` — from the frontend Nginx container. Your host-level reverse proxy forwards HTTPS traffic to that port and handles TLS certificate management.
+
+<Tabs>
+  <Tab title="Nginx">
+    Install Nginx on the host and obtain a TLS certificate (e.g. via [Certbot](https://certbot.eff.org/)):
+
+    ```bash
+    sudo apt install nginx certbot python3-certbot-nginx
+    sudo certbot --nginx -d yourdomain.com
+    ```
+
+    Create `/etc/nginx/sites-available/timeful` with the following content, then symlink it to `sites-enabled`:
+
+    ```nginx
+    server {
+        listen 80;
+        server_name yourdomain.com;
+        return 301 https://$server_name$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name yourdomain.com;
+
+        ssl_certificate     /path/to/cert.pem;
+        ssl_certificate_key /path/to/key.pem;
+
+        location / {
+            proxy_pass         http://localhost:3002;
+            proxy_http_version 1.1;
+            proxy_set_header   Upgrade $http_upgrade;
+            proxy_set_header   Connection 'upgrade';
+            proxy_set_header   Host $host;
+            proxy_set_header   X-Real-IP $remote_addr;
+            proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+        }
+    }
+    ```
+
+    ```bash
+    sudo ln -s /etc/nginx/sites-available/timeful /etc/nginx/sites-enabled/
+    sudo nginx -t && sudo systemctl reload nginx
+    ```
+  </Tab>
+  <Tab title="Caddy">
+    [Caddy](https://caddyserver.com/) automatically provisions and renews TLS certificates via Let's Encrypt — no manual certificate management required.
+
+    Install Caddy (see [caddyserver.com/docs/install](https://caddyserver.com/docs/install)), then create a `Caddyfile`:
+
+    ```caddyfile
+    yourdomain.com {
+        reverse_proxy localhost:3002
+    }
+    ```
+
+    ```bash
+    caddy start --config /etc/caddy/Caddyfile
+    ```
+
+    **Or add Caddy as a sidecar container** inside `docker-compose.ghcr.yml`:
+
+    ```yaml
+    caddy:
+      image: caddy:2-alpine
+      restart: unless-stopped
+      ports:
+        - "80:80"
+        - "443:443"
+      volumes:
+        - ./Caddyfile:/etc/caddy/Caddyfile
+        - caddy_data:/data
+        - caddy_config:/config
+      networks:
+        - timeful-network
+    ```
+
+    When running Caddy inside Docker, proxy to the frontend container name instead of localhost:
+
+    ```caddyfile
+    yourdomain.com {
+        reverse_proxy frontend:80
+    }
+    ```
+
+    Add the named volumes to the `volumes:` block at the bottom of the Compose file:
+
+    ```yaml
+    volumes:
+      caddy_data:
+      caddy_config:
+    ```
+  </Tab>
+</Tabs>
+
+## Custom Domain Setup
+
+After your reverse proxy is serving traffic, update the backend to match your domain by editing `.env` and restarting.
+
+<Steps>
+  <Step title="Set BASE_URL in .env">
+    `BASE_URL` is used to construct OAuth callback URLs, email links, and Stripe redirect URLs. It must exactly match the origin your users reach Timeful at — including the protocol and without a trailing slash.
+
+    ```bash
+    BASE_URL=https://yourdomain.com
+    ```
+  </Step>
+  <Step title="Set CORS_ALLOWED_ORIGINS in .env">
+    Add every origin that will send API requests to the backend. Localhost ports are always permitted automatically.
+
+    ```bash
+    # Single domain
+    CORS_ALLOWED_ORIGINS=https://yourdomain.com
+
+    # Apex + www
+    CORS_ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+
+    # Multiple subdomains
+    CORS_ALLOWED_ORIGINS=https://timeful.corp.com,https://staging.corp.com
+    ```
+
+    <Warning>
+      Always use the full URL with protocol (`https://`). No trailing slashes. When this variable is set, the default Timeful production domains are **replaced**, not appended — include every origin you need.
+    </Warning>
+  </Step>
+  <Step title="Update Google OAuth redirect URI">
+    In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials, edit your OAuth 2.0 Client ID and add the following **Authorised redirect URI**:
+
+    ```
+    https://yourdomain.com/api/auth/google/callback
+    ```
+
+    Remove any stale `localhost` entries if this instance is public-facing only.
+  </Step>
+  <Step title="Restart the backend">
+    Configuration changes in `.env` are picked up on container startup. A restart is sufficient — no rebuild is needed.
+
+    ```bash
+    # Source build
+    docker compose restart backend
+
+    # Pre-built GHCR images
+    docker compose -f docker-compose.ghcr.yml restart backend
+    ```
+  </Step>
+</Steps>
+
+## Complete Production `.env` Example
+
+```bash
+# .env — production custom domain deployment
+
+# Required
+ENCRYPTION_KEY=<output of: openssl rand -base64 32>
+
+# Custom domain
+BASE_URL=https://timeful.example.com
+CORS_ALLOWED_ORIGINS=https://timeful.example.com,https://www.timeful.example.com
+
+# Google OAuth (required for user accounts and calendar integration)
+CLIENT_ID=123456789-abc.apps.googleusercontent.com
+CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
+
+# Microsoft OAuth (optional — Outlook calendar integration)
+MICROSOFT_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+MICROSOFT_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Premium: unlock all features for all users (no Stripe required)
+SELF_HOSTED_PREMIUM=true
+
+# Email notifications (optional)
+GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+SCHEJ_EMAIL_ADDRESS=noreply@example.com
+
+# Slack alerts (optional)
+SLACK_PROD_WEBHOOK_URL=https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXX
+```
+
+## Security Checklist
+
+<Warning>
+  Never commit `.env` or any file containing OAuth secrets to version control. Add `.env` and `config.js` to your `.gitignore`.
+</Warning>
+
+| Item | Recommendation |
+|------|----------------|
+| **HTTPS** | Mandatory in production — OAuth providers refuse plain-HTTP redirect URIs |
+| **ENCRYPTION_KEY** | Generate with `openssl rand -base64 32`; back it up securely |
+| **OAuth credentials** | Keep `CLIENT_SECRET` and `MICROSOFT_CLIENT_SECRET` in `.env` only, never in `config.js` |
+| **MongoDB exposure** | By default port `27017` is bound to `0.0.0.0` in Compose — restrict it to `127.0.0.1:27017` in production |
+| **Container privileges** | All containers run as non-root with `no-new-privileges:true` and `cap_drop: ALL` out of the box |
+| **Regular updates** | Run `make pull-ghcr` weekly to pull patched images |
+| **Backups** | Schedule `make backup` via cron; store dumps off-host |
+
+<Tip>
+  To bind MongoDB only to localhost, edit the `ports` mapping in your Compose file:
+
+  ```yaml
+  mongodb:
+    ports:
+      - "127.0.0.1:27017:27017"
+  ```
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Configuration Reference" icon="gear" href="/self-hosting/configuration">
+    Full reference for every .env variable and config.js option
+  </Card>
+  <Card title="Updates & Backups" icon="clock-rotate-left" href="/deployment/updates-backups">
+    Automate rolling updates and scheduled MongoDB snapshots
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Container hardening, secrets management, and audit logging
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/operations/troubleshooting">
+    Diagnose OAuth errors, port conflicts, and connectivity issues
+  </Card>
+</CardGroup>

@@ -1,0 +1,239 @@
+---
+title: "Folders API: Organize Timeful Events"
+sidebarTitle: "Folders"
+description: "Create, list, retrieve, rename, recolor, and delete folders for organizing Timeful events — all under /api/user/folders."
+---
+
+Folders let users group their events into named, optionally color-coded collections. All folder endpoints are scoped to the authenticated user: a user can only read and modify their own folders.
+
+<Warning>
+All folder endpoints require authentication. Requests without a valid session cookie receive `401 Unauthorized`.
+</Warning>
+
+---
+
+## List All Folders
+
+```http
+GET /api/user/folders
+```
+
+Returns all folders belonging to the signed-in user. If the user has no folders, an empty array is returned.
+
+**Response `200 OK`:** Array of `Folder` objects (without event contents).
+
+```bash
+curl -s -b cookies.txt http://localhost:3002/api/user/folders
+```
+
+**Example response:**
+
+```json
+[
+  {
+    "_id": "64b3f1a2c9e77f001234ffff",
+    "userId": "64b3f1a2c9e77f001234aaaa",
+    "name": "Work",
+    "color": "#4f46e5",
+    "eventIds": []
+  }
+]
+```
+
+---
+
+## Create Folder
+
+```http
+POST /api/user/folders
+```
+
+Creates a new folder for the signed-in user.
+
+<ParamField body="name" type="string" required>
+  Display name for the folder (e.g. `"Work"`, `"Personal"`).
+</ParamField>
+
+<ParamField body="color" type="string">
+  Optional hex color code for the folder label (e.g. `"#4f46e5"`).
+</ParamField>
+
+**Response `201 Created`:** Returns an object containing the new folder's ObjectID:
+
+```json
+{ "id": "64b3f1a2c9e77f001234ffff" }
+```
+
+```bash
+curl -s -X POST http://localhost:3002/api/user/folders \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Work", "color": "#4f46e5" }'
+```
+
+---
+
+## Get Folder
+
+```http
+GET /api/user/folders/:folderId
+```
+
+Returns a single folder by its ObjectID, including the list of event IDs it contains.
+
+**Path Parameter:**
+
+| Parameter  | Type   | Description              |
+|------------|--------|--------------------------|
+| `folderId` | string | MongoDB ObjectID of the folder |
+
+**Response `200 OK`:** A `Folder` object with `eventIds` populated.
+
+**Response `404 Not Found`:** `{ "error": "Folder not found" }` — folder does not exist or belongs to a different user.
+
+```bash
+curl -s -b cookies.txt \
+  http://localhost:3002/api/user/folders/64b3f1a2c9e77f001234ffff
+```
+
+**Example response:**
+
+```json
+{
+  "_id": "64b3f1a2c9e77f001234ffff",
+  "userId": "64b3f1a2c9e77f001234aaaa",
+  "name": "Work",
+  "color": "#4f46e5",
+  "eventIds": [
+    "64b3f1a2c9e77f001234abcd",
+    "64b3f1a2c9e77f001234efgh"
+  ]
+}
+```
+
+---
+
+## Update Folder
+
+```http
+PATCH /api/user/folders/:folderId
+```
+
+Updates the name and/or color of a folder. Only fields present in the request body are changed.
+
+**Path Parameter:**
+
+| Parameter  | Type   | Description                    |
+|------------|--------|--------------------------------|
+| `folderId` | string | MongoDB ObjectID of the folder |
+
+<ParamField body="name" type="string">
+  New display name for the folder.
+</ParamField>
+
+<ParamField body="color" type="string">
+  New hex color code (e.g. `"#10b981"`).
+</ParamField>
+
+**Response `200 OK`:** No body.
+
+```bash
+curl -s -X PATCH http://localhost:3002/api/user/folders/64b3f1a2c9e77f001234ffff \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Work Projects", "color": "#10b981" }'
+```
+
+---
+
+## Delete Folder
+
+```http
+DELETE /api/user/folders/:folderId
+```
+
+Permanently deletes a folder. Events that were in the folder are **not** deleted; they simply lose their folder association.
+
+**Path Parameter:**
+
+| Parameter  | Type   | Description                    |
+|------------|--------|--------------------------------|
+| `folderId` | string | MongoDB ObjectID of the folder |
+
+**Response `200 OK`:** No body.
+
+```bash
+curl -s -X DELETE http://localhost:3002/api/user/folders/64b3f1a2c9e77f001234ffff \
+  -b cookies.txt
+```
+
+---
+
+## Assigning Events to Folders
+
+Use [`POST /api/user/events/:eventId/set-folder`](/api/user#set-event-folder) from the User API to add or remove events from a folder.
+
+**Worked example — create a folder and assign an event:**
+
+<Steps>
+  <Step title="Create the folder">
+    ```bash
+    curl -s -X POST http://localhost:3002/api/user/folders \
+      -b cookies.txt \
+      -H "Content-Type: application/json" \
+      -d '{ "name": "Q3 Planning", "color": "#f59e0b" }'
+    # Response: { "id": "64b3f1a2c9e77f001234ffff" }
+    ```
+  </Step>
+  <Step title="Assign an event to the folder">
+    ```bash
+    curl -s -X POST \
+      http://localhost:3002/api/user/events/64b3f1a2c9e77f001234abcd/set-folder \
+      -b cookies.txt \
+      -H "Content-Type: application/json" \
+      -d '{ "folderId": "64b3f1a2c9e77f001234ffff" }'
+    # Response: 200 OK
+    ```
+  </Step>
+  <Step title="Verify the folder contents">
+    ```bash
+    curl -s -b cookies.txt \
+      http://localhost:3002/api/user/folders/64b3f1a2c9e77f001234ffff
+    # Response: Folder object with eventIds populated
+    ```
+  </Step>
+  <Step title="Remove the event from the folder">
+    ```bash
+    curl -s -X POST \
+      http://localhost:3002/api/user/events/64b3f1a2c9e77f001234abcd/set-folder \
+      -b cookies.txt \
+      -H "Content-Type: application/json" \
+      -d '{ "folderId": null }'
+    # Response: 200 OK
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Folder Object Reference
+
+<ResponseField name="_id" type="string">
+  MongoDB ObjectID of the folder.
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  ObjectID of the owning user.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Display name of the folder.
+</ResponseField>
+
+<ResponseField name="color" type="string">
+  Optional hex color string (e.g. `"#4f46e5"`). Absent when not set.
+</ResponseField>
+
+<ResponseField name="eventIds" type="string[]">
+  Array of event ObjectIDs contained in this folder. Only populated by `GET /api/user/folders/:folderId`; empty array otherwise.
+</ResponseField>

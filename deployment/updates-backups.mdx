@@ -1,0 +1,205 @@
+---
+title: "Update and Back Up Your Timeful Instance"
+sidebarTitle: "Updates & Backups"
+description: "Keep your self-hosted Timeful deployment current with the latest images and protect your MongoDB data with regular backups and restores."
+---
+
+Keeping your Timeful instance updated and your data backed up are the two most important ongoing operations for any self-hosted deployment. This page covers both workflows for Docker Compose deployments — using either pre-built images from GHCR or a source build.
+
+---
+
+## Updating Timeful
+
+### Option 1: Update with Pre-built Images (Recommended)
+
+Pre-built images are published to GitHub Container Registry on every push to the `main` branch. Pulling and restarting takes under a minute with no build step required.
+
+<Tabs>
+  <Tab title="Makefile">
+    ```bash
+    make pull-ghcr
+    ```
+
+    This runs `docker compose -f docker-compose.ghcr.yml pull` followed by `docker compose -f docker-compose.ghcr.yml up -d` and prints a confirmation message when done.
+  </Tab>
+  <Tab title="Docker Compose">
+    ```bash
+    # Pull the latest images from GHCR
+    docker compose -f docker-compose.ghcr.yml pull
+
+    # Restart all services with the new images
+    docker compose -f docker-compose.ghcr.yml up -d
+    ```
+  </Tab>
+</Tabs>
+
+Available image tags:
+
+| Tag | Meaning |
+|-----|---------|
+| `latest` | Latest stable build from the `main` branch |
+| `main` | Alias for `latest` |
+| `<version>` | Specific version tags published at releases |
+| `<branch>-<sha>` | Builds from a specific commit |
+
+### Option 2: Update from Source
+
+If you customise the Timeful source code or prefer building locally:
+
+<Tabs>
+  <Tab title="Makefile">
+    ```bash
+    make pull
+    ```
+
+    This runs `git pull`, then rebuilds all images with `--no-cache`, and brings the stack back up.
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    # Pull the latest source
+    git pull origin main
+
+    # Stop running services
+    docker compose down
+
+    # Rebuild without cache to pick up all changes
+    docker compose build --no-cache
+
+    # Start the updated stack
+    docker compose up -d
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Always create a database backup before updating. See the Backup section below.
+</Warning>
+
+---
+
+## Database Backup
+
+Backups are stored on the host at `./backups/backup-YYYYMMDD-HHMMSS/`. Each backup is a `mongodump` snapshot of the `schej-it` database.
+
+### Creating a Backup
+
+<Tabs>
+  <Tab title="Makefile">
+    ```bash
+    make backup
+    ```
+
+    The Makefile target:
+    1. Creates the `./backups/` directory if it does not exist.
+    2. Runs `mongodump --db=schej-it --out=/data/backup` inside the `timeful-mongodb` container.
+    3. Copies the result to `./backups/backup-YYYYMMDD-HHMMSS/` on the host.
+    4. Prints `✅ Backup created in ./backups/`.
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    # Step 1: Dump the database inside the container
+    docker compose exec mongodb mongodump --db=schej-it --out=/data/backup
+
+    # Step 2: Copy the dump to the host
+    docker cp timeful-mongodb:/data/backup ./mongodb-backup
+    ```
+  </Tab>
+</Tabs>
+
+### Backup Storage Layout
+
+```
+./backups/
+├── backup-20250115-083000/
+│   └── schej-it/
+│       ├── events.bson
+│       ├── events.metadata.json
+│       ├── users.bson
+│       ├── users.metadata.json
+│       └── ...
+├── backup-20250116-083000/
+│   └── schej-it/
+│       └── ...
+```
+
+<Tip>
+  Automate backups with a cron job. A daily backup at 03:00 is a sensible default:
+
+  ```cron
+  0 3 * * * cd /opt/timeful && make backup >> /var/log/timeful-backup.log 2>&1
+  ```
+</Tip>
+
+### Recommended Backup Schedule
+
+| Frequency | Retention | Use case |
+|-----------|-----------|----------|
+| Daily | 7 days | Typical self-hosted team |
+| Before every update | Keep until next update | Pre-update safety net |
+| Weekly | 4 weeks | Low-traffic personal instance |
+
+---
+
+## Database Restore
+
+<Warning>
+  Restoring overwrites all current data in the `schej-it` database. Back up first if you have unsaved changes.
+</Warning>
+
+### Restoring from the Latest Backup
+
+<Tabs>
+  <Tab title="Makefile">
+    ```bash
+    make restore
+    ```
+
+    The Makefile target automatically picks the most recent directory in `./backups/`, copies it into the container, and runs `mongorestore --drop` to replace the existing data.
+  </Tab>
+  <Tab title="Manual">
+    ```bash
+    # Step 1: Identify the backup you want to restore
+    ls ./backups/
+
+    # Step 2: Copy the backup into the container
+    docker cp ./backups/backup-20250115-083000 timeful-mongodb:/data/restore
+
+    # Step 3: Restore — the --drop flag removes existing collections first
+    docker compose exec mongodb mongorestore --db=schej-it /data/restore/schej-it --drop
+    ```
+  </Tab>
+</Tabs>
+
+### Restoring from a Specific Backup
+
+If `make restore` picks the wrong backup, use the manual steps above and substitute the directory name of the backup you want:
+
+```bash
+docker cp ./backups/backup-20250110-120000 timeful-mongodb:/data/restore
+docker compose exec mongodb mongorestore --db=schej-it /data/restore/schej-it --drop
+```
+
+---
+
+## Verifying a Backup
+
+After creating a backup, spot-check the dump files to confirm they are non-empty:
+
+```bash
+ls -lh ./backups/$(ls -t backups/ | head -1)/schej-it/
+```
+
+You should see `.bson` and `.metadata.json` files for each collection (`events`, `users`, `responses`, etc.) with non-zero sizes.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card icon="box" href="/self-hosting/docker" title="Docker Deployment">
+    Full Docker Compose setup guide including initial configuration.
+  </Card>
+  <Card icon="shield" href="/operations/security" title="Security Hardening">
+    Container security best practices for production deployments.
+  </Card>
+</CardGroup>

@@ -1,0 +1,268 @@
+---
+title: "Troubleshoot Common Timeful Issues"
+sidebarTitle: "Troubleshooting"
+description: "Step-by-step fixes for the most frequent Timeful self-hosting problems: startup failures, OAuth errors, CORS, cookies, and more."
+---
+
+This page covers the issues most commonly reported by self-hosters. Each section includes the symptom, root cause, and the exact commands or configuration changes needed to resolve it. If your problem is not listed here, check the GitHub Issues tracker or ask in Discord.
+
+---
+
+<Accordion title="Application won't start">
+  **Symptom:** `docker compose up -d` finishes but the app is unreachable at `http://localhost:3002`, or containers keep restarting.
+
+  **Step 1 — Read the logs:**
+
+  ```bash
+  docker compose logs app
+  # or for source-build stacks with separate services:
+  docker compose logs backend
+  docker compose logs frontend
+  ```
+
+  Look for lines like `panic`, `dial tcp`, `no such host`, or `permission denied`.
+
+  **Step 2 — Confirm the `.env` file exists and has a value for `ENCRYPTION_KEY`:**
+
+  ```bash
+  grep ENCRYPTION_KEY .env
+  ```
+
+  If the key is missing or empty, generate one and restart:
+
+  ```bash
+  echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
+  docker compose restart
+  ```
+
+  **Step 3 — Check MongoDB health:**
+
+  ```bash
+  docker compose ps mongodb
+  ```
+
+  The status should show `healthy`. If it shows `starting` or `unhealthy`, MongoDB is still initialising or has crashed. Wait 30 seconds and check again:
+
+  ```bash
+  docker compose logs mongodb
+  ```
+
+  **Step 4 — Confirm port 3002 is not already in use on the host:**
+
+  ```bash
+  lsof -i :3002
+  ```
+
+  If something else is bound to 3002, either stop that process or change the host port in `docker-compose.yml` (see the "Port conflicts" section below).
+</Accordion>
+
+<Accordion title="Google OAuth errors">
+  **Symptom:** Clicking **Sign in with Google** shows an error page from Google, such as *"redirect_uri_mismatch"* or *"Error 400: redirect_uri_mismatch"*.
+
+  **Root cause:** The redirect URI that Timeful sends to Google does not match any URI in your OAuth client's **Authorized redirect URIs** list.
+
+  **Fix:**
+
+  1. Open [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials).
+  2. Click on your OAuth 2.0 Client ID.
+  3. Under **Authorized redirect URIs**, confirm the following URI is listed **exactly** (including protocol, no trailing slash):
+     - Docker: `http://localhost:3002/auth`
+     - Production: `https://yourdomain.com/auth`
+     - Vercel deployment: `https://your-vercel-url.vercel.app/auth`
+  4. Also confirm **Authorized JavaScript origins** contains your frontend origin.
+  5. Click **Save** and wait 1–2 minutes for changes to propagate.
+
+  **Other OAuth issues:**
+
+  - *APIs not enabled* — Make sure **Google Calendar API** and **Google People API** are enabled in your project under **APIs & Services → Library**.
+  - *Wrong credentials* — Confirm `CLIENT_ID` in `.env` (or Railway Variables) matches the **Client ID** on the credentials page, not the project number or any other ID.
+  - *Credential not yet set in `config.js`* — The `googleClientId` in `frontend/public/config.js` must match `CLIENT_ID`. A mismatch causes the sign-in prompt to use the wrong client.
+</Accordion>
+
+<Accordion title="Port conflicts on 3002">
+  **Symptom:** `docker compose up` fails with `Bind for 0.0.0.0:3002 failed: port is already allocated`.
+
+  **Fix:** Change the host-side port in `docker-compose.yml`. The container-internal port (`3002`) must stay the same; only the left-hand side of the mapping changes:
+
+  ```yaml
+  services:
+    frontend:           # or "app" in single-container setups
+      ports:
+        - "8080:3002"   # change 8080 to any free port on your host
+  ```
+
+  After editing, restart the stack:
+
+  ```bash
+  docker compose down
+  docker compose up -d
+  ```
+
+  The application is then available at `http://localhost:8080`. Remember to update your Google OAuth **Authorized redirect URIs** and **Authorized JavaScript origins** if you change the port.
+</Accordion>
+
+<Accordion title="MongoDB connection issues">
+  **Symptom:** Backend logs show `server selection error`, `connection refused`, or `dial tcp: lookup mongodb: no such host`.
+
+  **Step 1 — Check MongoDB container logs:**
+
+  ```bash
+  docker compose logs mongodb
+  ```
+
+  If MongoDB is still starting, wait 20–30 seconds and try again.
+
+  **Step 2 — Verify the connection string:**
+
+  - Docker Compose (internal networking): `mongodb://mongodb:27017` — the hostname `mongodb` resolves to the container.
+  - External Atlas: `mongodb+srv://user:pass@cluster.xxxxx.mongodb.net/...` — verify user, password, and cluster address are correct.
+
+  ```bash
+  # Check what MONGO_URI the backend sees
+  docker compose exec backend env | grep MONGO
+  ```
+
+  **Step 3 — For MongoDB Atlas: confirm IP access list:**
+
+  1. Go to Atlas → **Network Access**.
+  2. Confirm `0.0.0.0/0` is listed (or the specific IP of your Railway/Modal server).
+  3. If the IP is missing, click **Add IP Address** and add it.
+
+  **Step 4 — Test connectivity from inside the backend container:**
+
+  ```bash
+  docker compose exec backend ping -c 3 mongodb
+  ```
+
+  If ping fails, the containers are not on the same Docker network. Confirm `docker-compose.yml` puts both services on `timeful-network`.
+</Accordion>
+
+<Accordion title="CORS errors in the browser">
+  **Symptom:** The browser console shows `Access to fetch at '...' from origin '...' has been blocked by CORS policy`.
+
+  **Root cause:** The backend's `CORS_ALLOWED_ORIGINS` variable does not include the exact origin the browser is sending.
+
+  **Fix:**
+
+  Set `CORS_ALLOWED_ORIGINS` to your frontend's exact origin — same protocol, same domain, no trailing slash, no path:
+
+  ```bash
+  # Correct
+  CORS_ALLOWED_ORIGINS=https://timeful-xxxx.vercel.app
+
+  # Wrong — trailing slash
+  CORS_ALLOWED_ORIGINS=https://timeful-xxxx.vercel.app/
+
+  # Wrong — includes path
+  CORS_ALLOWED_ORIGINS=https://timeful-xxxx.vercel.app/app
+  ```
+
+  For multiple origins (e.g., custom domain plus Vercel preview), use a comma-separated list with no spaces:
+
+  ```bash
+  CORS_ALLOWED_ORIGINS=https://timeful.app,https://timeful-xxxx.vercel.app
+  ```
+
+  After updating, restart the backend:
+
+  ```bash
+  docker compose restart backend
+  # or in Railway/Modal, redeploy the service
+  ```
+</Accordion>
+
+<Accordion title="Login doesn't persist after OAuth">
+  **Symptom:** Sign-in with Google completes successfully, but refreshing the page shows you as logged out.
+
+  **Root cause:** Timeful uses session cookies. When the frontend and backend are on different domains (common in Vercel + Railway deployments), browsers block cross-site cookies by default unless they are marked `SameSite=None; Secure`.
+
+  This works correctly when both `BASE_URL` and `CORS_ALLOWED_ORIGINS` are set to the frontend's `https://` URL. The most common mistakes are:
+
+  - `BASE_URL` is set to the Railway backend URL instead of the Vercel frontend URL.
+  - `BASE_URL` uses `http://` instead of `https://` (cookies require Secure flag over HTTPS).
+  - `CORS_ALLOWED_ORIGINS` does not match the actual origin the browser sends.
+
+  **Fix:**
+
+  Confirm in Railway (or your backend env):
+
+  ```
+  BASE_URL=https://your-frontend-domain.vercel.app
+  CORS_ALLOWED_ORIGINS=https://your-frontend-domain.vercel.app
+  ```
+
+  Both values must be the **frontend** URL, not the backend URL. Redeploy after changing.
+
+  <Note>
+    This issue does not affect Docker Compose deployments where the frontend and backend share the same origin (`http://localhost:3002`).
+  </Note>
+</Accordion>
+
+<Accordion title="Outlook calendar integration not working">
+  **Symptom:** Clicking **Connect Outlook Calendar** shows an error, or the button is greyed out with a message about Microsoft OAuth not being configured.
+
+  **Step 1 — Confirm `MICROSOFT_CLIENT_ID` is set:**
+
+  ```bash
+  # Docker
+  docker compose exec backend env | grep MICROSOFT
+
+  # Railway
+  # Check Settings → Variables in your Railway project
+  ```
+
+  If the variable is missing, you need to create an Azure App Registration:
+
+  1. Go to [portal.azure.com](https://portal.azure.com) → **Azure Active Directory → App registrations → New registration**.
+  2. Supported account types: **Accounts in any organizational directory and personal Microsoft accounts**.
+  3. Redirect URI (Web): `https://yourdomain.com/auth` (must match exactly).
+  4. After registration, copy the **Application (client) ID** → set as `MICROSOFT_CLIENT_ID`.
+  5. **Certificates & secrets → New client secret** → copy the value → set as `MICROSOFT_CLIENT_SECRET`.
+  6. **API permissions → Add a permission → Microsoft Graph → Delegated permissions** → add `offline_access`, `User.Read`, `Calendars.Read`.
+
+  **Step 2 — Update `config.js`:**
+
+  The `microsoftClientId` in `frontend/public/config.js` must match `MICROSOFT_CLIENT_ID`:
+
+  ```javascript
+  window.__TIMEFUL_CONFIG__ = {
+    googleClientId: "...",
+    microsoftClientId: "your-azure-application-client-id",
+    disableAnalytics: false,
+  }
+  ```
+
+  **Step 3 — Check the redirect URI in Azure:**
+
+  The redirect URI in your Azure App Registration must exactly match your frontend domain plus `/auth`:
+
+  - Docker: `http://localhost:3002/auth`
+  - Production: `https://yourdomain.com/auth`
+</Accordion>
+
+---
+
+## Getting Help
+
+If none of the above resolves your issue, collect the following before asking for help:
+
+```bash
+# Container status
+docker compose ps
+
+# Full logs (last 100 lines)
+docker compose logs --tail=100 > timeful-logs.txt
+
+# Docker and Compose versions
+docker version
+docker compose version
+```
+
+<CardGroup cols={2}>
+  <Card icon="github" href="https://github.com/schej-it/timeful.app/issues" title="GitHub Issues">
+    Open a bug report or search existing issues. Include your OS, Docker version, and the relevant log output.
+  </Card>
+  <Card icon="discord" href="https://discord.gg/v6raNqYxx3" title="Discord">
+    Ask questions and get help from the Timeful community in real time.
+  </Card>
+</CardGroup>

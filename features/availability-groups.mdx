@@ -1,0 +1,159 @@
+---
+title: "Availability Groups: Real-Time Team Scheduling"
+sidebarTitle: "Availability Groups"
+description: "Persistent groups that surface live calendar availability for your whole team — no new poll required every time you need to find a shared window."
+---
+
+Availability groups solve a different problem than one-off polls. Instead of asking "when can everyone meet for this specific event?", a group answers "what does everyone's schedule look like right now?" Members connect their calendars once, and the group continuously reflects their real-time availability — no manual re-entry, no stale responses from last week.
+
+For the Columbia Math Department, availability groups are ideal for standing visibility needs: knowing at a glance when TAs are free for walk-in questions, which faculty have open office hours, or whether the whole seminar committee has a common free window this week.
+
+## How Availability Groups Differ from Polls
+
+<Tabs>
+  <Tab title="Availability Groups">
+    - **Persistent** — the group lives indefinitely and is always current
+    - **Calendar-driven** — members' availability is read directly from their connected calendars in real time
+    - **No response step** — members don't "submit" availability; their calendar IS their response
+    - **Always up to date** — if a member's calendar changes, the group reflects it immediately
+    - **Best for**: standing office hours visibility, recurring team check-ins, TA schedules, faculty availability boards
+  </Tab>
+  <Tab title="Availability Polls">
+    - **Single-use** — created for one specific scheduling decision
+    - **Manually entered** — participants drag to mark availability (optionally auto-filled from calendar)
+    - **Response-based** — each participant explicitly submits their availability
+    - **Snapshot in time** — responses reflect what was entered, not live calendar state
+    - **Best for**: scheduling a one-time meeting, conference, or event with a group
+  </Tab>
+</Tabs>
+
+## Data Model
+
+Availability groups use the same `Event` model as polls, distinguished by `type: "group"`:
+
+```go
+// From server/models/event.go
+const (
+    SPECIFIC_DATES EventType = "specific_dates"
+    DOW            EventType = "dow"
+    GROUP          EventType = "group"   // <-- availability group
+)
+```
+
+The `Event` document for a group carries two runtime-populated fields that are not persisted to MongoDB (they are fetched and joined at query time):
+
+```go
+// Attendees for an availability group (fetched from Attendees collection)
+Attendees *[]Attendee `json:"attendees" bson:"-"`
+
+// Whether the current user has responded to the group
+HasResponded *bool `json:"hasResponded" bson:"-"`
+```
+
+The `bson:"-"` tag means these fields are never written to the database — they are hydrated on each read from the separate `Attendees` collection.
+
+## The Attendees Model
+
+Group membership is managed through a dedicated `Attendees` collection. Each attendee record links a user (by email) to a group (by event ID):
+
+```go
+// From server/models/attendee.go
+type Attendee struct {
+    Id      primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
+    EventId primitive.ObjectID `json:"eventId" bson:"eventId,omitempty"`
+
+    Email    string `json:"email" bson:"email,omitempty"`
+    Declined *bool  `json:"declined" bson:"declined,omitempty"`
+}
+```
+
+| Field | Description |
+|---|---|
+| `EventId` | References the `Event` document for this group |
+| `Email` | The attendee's email address, used to look up their `CalendarAccount` data |
+| `Declined` | Set to `true` if the attendee has explicitly declined the group invitation |
+
+When the `hasResponded` field is populated on the `Event`, it is derived by checking whether the currently authenticated user's ID is in the `Attendees` collection for that event.
+
+## Creating an Availability Group
+
+<Steps>
+  <Step title="Start a new group">
+    Navigate to the dashboard and click **New Availability Group**. Groups use the `group` event type — select it in the creation dialog.
+  </Step>
+  <Step title="Add attendees">
+    Provide the email addresses of the people you want to include. In the `CreateEventRequest`, these are passed as a `[]string` in the `attendees` field:
+
+    ```json
+    {
+      "name": "Math Department TAs – Fall 2024",
+      "type": "group",
+      "duration": 1,
+      "dates": [],
+      "attendees": [
+        "ta1@columbia.edu",
+        "ta2@columbia.edu",
+        "ta3@columbia.edu"
+      ]
+    }
+    ```
+  </Step>
+  <Step title="Members connect their calendars">
+    Each invited attendee receives a link to the group. When they open it, they authorize Timeful to read their calendar via Google OAuth, Microsoft OAuth, or Apple CalDAV. See [Calendar Integration](/features/calendar-integration) for setup details.
+  </Step>
+  <Step title="View live availability">
+    Once members have connected calendars, the group view shows a live availability grid reflecting everyone's real calendar state. The grid updates automatically as calendars change — no action required from attendees.
+  </Step>
+</Steps>
+
+## Columbia Math Department Use Cases
+
+<CardGroup cols={2}>
+  <Card title="TA Office Hours Board" icon="chalkboard-user" href="/features/availability-groups">
+    Create a group for all TAs in a course. Students can view the group link to see at a glance which TAs are free right now, without the TAs needing to update anything manually.
+  </Card>
+  <Card title="Faculty Availability" icon="user-tie" href="/features/availability-groups">
+    A department-wide group lets staff quickly find a time when a subset of faculty are simultaneously free for an impromptu meeting or decision.
+  </Card>
+  <Card title="Seminar Committee Scheduling" icon="calendar-check" href="/features/availability-groups">
+    Keep a persistent group for the seminar scheduling committee. Finding a time for committee meetings is instant — no new poll needed each semester.
+  </Card>
+  <Card title="Lab Slot Coordination" icon="flask" href="/features/availability-groups">
+    Research group members add their calendars once. The PI can check lab availability before booking equipment time or scheduling group meetings.
+  </Card>
+</CardGroup>
+
+## Calendar Availability in Groups
+
+When a member of a group submits their calendar configuration, the `updateEventResponse` endpoint accepts a richer payload than a normal poll response:
+
+```json
+{
+  "guest": false,
+  "useCalendarAvailability": true,
+  "enabledCalendars": {
+    "alice@columbia.edu_google": ["primary", "Work"]
+  },
+  "calendarOptions": {
+    "bufferTime": { "enabled": true, "time": 15 },
+    "workingHours": { "enabled": true, "startTime": 9, "endTime": 18 }
+  }
+}
+```
+
+- `useCalendarAvailability` — signals that Timeful should derive this member's availability from their connected calendar rather than from manually dragged slots.
+- `enabledCalendars` — a map from `calendarAccountKey` to an array of sub-calendar IDs to include. Members can exclude personal or irrelevant calendars.
+- `calendarOptions` — per-member buffer time and working hours settings that apply when computing availability from calendar data.
+
+<Note>
+  Availability groups are a premium feature. They are automatically unlocked on all self-hosted deployments with `SELF_HOSTED_PREMIUM=true`. See [Premium Features](/features/premium).
+</Note>
+
+<CardGroup cols={2}>
+  <Card title="Calendar Integration" icon="calendar-circle-user" href="/features/calendar-integration">
+    Learn how to connect Google, Outlook, and Apple Calendar accounts.
+  </Card>
+  <Card title="Availability Polls" icon="poll" href="/features/availability-polls">
+    For one-time scheduling decisions, use a standard availability poll instead.
+  </Card>
+</CardGroup>

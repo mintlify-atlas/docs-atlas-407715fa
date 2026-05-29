@@ -1,0 +1,500 @@
+---
+title: "Events API: Create and Manage Availability Polls"
+sidebarTitle: "Events"
+description: "Full reference for all /api/events endpoints: create, edit, respond, delete, duplicate, archive, and calendar availability."
+---
+
+The Events API is the core of Timeful. It lets you create availability polls (specific dates, days-of-week, or availability groups), collect responses from signed-in users or guests, and query aggregated calendar availability.
+
+<Info>
+Most event endpoints do **not** require authentication — guests can view and respond to events without an account. Endpoints that modify ownership (delete, duplicate, archive, calendar availabilities, decline) do require a valid session.
+</Info>
+
+---
+
+## Create Event
+
+```http
+POST /api/events
+```
+
+Authentication is **optional**. If a session cookie is present, the new event is owned by that user. Otherwise `ownerId` is set to null (guest-created event).
+
+On success, returns `201 Created` with the new event's IDs:
+
+```json
+{ "eventId": "64b3f1a2c9e77f001234abcd", "shortId": "abc123" }
+```
+
+### Request Body
+
+<ParamField body="name" type="string" required>
+  Display name for the event (e.g. `"Team sync"`).
+</ParamField>
+
+<ParamField body="duration" type="number" required>
+  Duration of the event window in **hours** (e.g. `1.5` for 90 minutes).
+</ParamField>
+
+<ParamField body="dates" type="datetime[]" required>
+  Array of ISO 8601 datetime strings representing the candidate dates/slots.
+</ParamField>
+
+<ParamField body="type" type="string" required>
+  Event type. One of:
+  - `"specific_dates"` — poll across specific calendar dates
+  - `"dow"` — poll across days of the week (repeating)
+  - `"group"` — availability group (invites members by email)
+</ParamField>
+
+<ParamField body="hasSpecificTimes" type="boolean">
+  When `true`, each date in `dates` has a corresponding entry in `times` specifying the exact time window. Only applicable for `specific_dates` events.
+</ParamField>
+
+<ParamField body="times" type="datetime[]">
+  Parallel array to `dates` containing specific start times. Required when `hasSpecificTimes` is `true`.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional event description. Maximum 5 000 characters.
+</ParamField>
+
+<ParamField body="location" type="string">
+  Optional location string. Maximum 500 characters.
+</ParamField>
+
+<ParamField body="isSignUpForm" type="boolean">
+  When `true`, the event becomes a sign-up form where respondents choose named blocks rather than free-form availability.
+</ParamField>
+
+<ParamField body="signUpMode" type="string">
+  Sign-up form mode string (used when `isSignUpForm` is `true`).
+</ParamField>
+
+<ParamField body="signUpBlocks" type="object[]">
+  Array of `SignUpBlock` objects `{ name, capacity, startDate, endDate }`. Each block is assigned an `_id` automatically if one is not provided.
+</ParamField>
+
+<ParamField body="startOnMonday" type="boolean">
+  When `true`, the week view starts on Monday instead of Sunday. Applicable to `dow` events.
+</ParamField>
+
+<ParamField body="notificationsEnabled" type="boolean">
+  When `true`, the event owner receives an email when someone responds.
+</ParamField>
+
+<ParamField body="blindAvailabilityEnabled" type="boolean">
+  When `true`, respondents cannot see others' availability until they have submitted their own.
+</ParamField>
+
+<ParamField body="daysOnly" type="boolean">
+  When `true`, the poll collects day-level availability rather than time slots.
+</ParamField>
+
+<ParamField body="remindees" type="string[]">
+  Array of email addresses. Each address receives a reminder email to respond. Scheduled via Google Cloud Tasks.
+</ParamField>
+
+<ParamField body="sendEmailAfterXResponses" type="integer">
+  If set to a positive integer `N`, the owner receives a notification email after `N` responses are collected (fires once).
+</ParamField>
+
+<ParamField body="collectEmails" type="boolean">
+  When `true`, guests are prompted to provide their email address when responding.
+</ParamField>
+
+<ParamField body="timeIncrement" type="integer">
+  Time slot granularity in minutes. Defaults to `60` in this fork. Common values: `15`, `30`, `60`.
+</ParamField>
+
+<ParamField body="maxCapacityPerSlot" type="integer">
+  Columbia Math Department addition. Maximum number of respondents per time slot. When a slot is full, further sign-ups for that slot are rejected with a `400` listing `blockedTimestamps`.
+</ParamField>
+
+<ParamField body="attendees" type="string[]">
+  Array of email addresses to invite. Only used when `type` is `"group"`. Each address receives an invitation email.
+</ParamField>
+
+**Example:**
+
+```bash
+curl -s -X POST http://localhost:3002/api/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Team Kickoff",
+    "duration": 1,
+    "dates": ["2025-09-01T09:00:00Z", "2025-09-02T09:00:00Z"],
+    "type": "specific_dates"
+  }'
+```
+
+---
+
+## Get Event
+
+```http
+GET /api/events/:eventId
+```
+
+No authentication required. Accepts either the MongoDB ObjectID hex string or the short ID (e.g. `abc123`).
+
+**Response `200 OK`:** Full `Event` object including a `responses` map (keyed by user ID or guest name) with user profile info populated. Availability arrays are omitted from the responses map in this endpoint — use [Get Responses](#get-responses) to retrieve filtered availability.
+
+```bash
+curl -s http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd
+```
+
+---
+
+## Edit Event
+
+```http
+PUT /api/events/:eventId
+```
+
+Replaces the mutable fields of an event. If the event has an `ownerId`, the caller must be that owner (returns `403` otherwise). Guest-created events (no owner) can be edited by anyone.
+
+The request body accepts the same fields as [Create Event](#create-event) minus `creatorPosthogId`. All four required fields (`name`, `duration`, `dates`, `type`) must always be sent.
+
+**Response `200 OK`:** No body.
+
+```bash
+curl -s -X PUT http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Team Kickoff (updated)",
+    "duration": 1.5,
+    "dates": ["2025-09-01T09:00:00Z"],
+    "type": "specific_dates"
+  }'
+```
+
+---
+
+## Get Responses
+
+```http
+GET /api/events/:eventId/responses?timeMin=<ISO8601>&timeMax=<ISO8601>
+```
+
+Returns a `map<userId, Response>` with availability filtered to the `[timeMin, timeMax]` window. Useful when rendering a specific week in the availability grid.
+
+**Query Parameters:**
+
+| Parameter | Type     | Required | Description                      |
+|-----------|----------|----------|----------------------------------|
+| `timeMin` | ISO 8601 | ✅       | Start of the time window         |
+| `timeMax` | ISO 8601 | ✅       | End of the time window           |
+
+```bash
+curl -s "http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/responses?timeMin=2025-09-01T00:00:00Z&timeMax=2025-09-07T23:59:59Z"
+```
+
+---
+
+## Submit / Update Response
+
+```http
+POST /api/events/:eventId/response
+```
+
+Creates or replaces the caller's availability for an event. Works for both signed-in users (`"guest": false`) and guests (`"guest": true`).
+
+<ParamField body="guest" type="boolean" required>
+  `true` for anonymous respondents; `false` for signed-in users.
+</ParamField>
+
+<ParamField body="name" type="string">
+  Guest display name. Required when `guest` is `true`.
+</ParamField>
+
+<ParamField body="email" type="string">
+  Guest email address. Optional when `guest` is `true` and `collectEmails` is enabled.
+</ParamField>
+
+<ParamField body="availability" type="datetime[]">
+  Array of ISO 8601 timestamps the user is available.
+</ParamField>
+
+<ParamField body="ifNeeded" type="datetime[]">
+  Array of timestamps where the user is available "if needed" (lower priority).
+</ParamField>
+
+<ParamField body="useCalendarAvailability" type="boolean">
+  When `true` (Availability Groups), derive availability from connected calendars. Signed-in users only.
+</ParamField>
+
+<ParamField body="enabledCalendars" type="object">
+  Map of `{ calendarAccountKey: [subCalendarId, ...] }` specifying which sub-calendars to pull. Used with `useCalendarAvailability`.
+</ParamField>
+
+<ParamField body="manualAvailability" type="object">
+  Map of `{ dayTimestamp: [availableTimestamps] }` for manual overrides in Availability Groups.
+</ParamField>
+
+<ParamField body="calendarOptions" type="object">
+  Per-response `CalendarOptions` (`bufferTime`, `workingHours`) to override the user's global settings.
+</ParamField>
+
+<ParamField body="signUpBlockIds" type="string[]">
+  Array of `SignUpBlock` IDs the user is signing up for. Only used when `isSignUpForm` is `true`.
+</ParamField>
+
+<Note>
+When `maxCapacityPerSlot` is set on the event and a requested time slot is full, the server returns `400` with `{ "error": "Some time slots are at capacity", "blockedTimestamps": [...] }`.
+</Note>
+
+**Response `200 OK`:** Returns `{}`.
+
+```bash
+# Signed-in user response
+curl -s -X POST http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/response \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "guest": false,
+    "availability": ["2025-09-01T09:00:00Z", "2025-09-01T10:00:00Z"]
+  }'
+```
+
+```bash
+# Guest response
+curl -s -X POST http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/response \
+  -H "Content-Type: application/json" \
+  -d '{
+    "guest": true,
+    "name": "Alice",
+    "availability": ["2025-09-01T09:00:00Z"]
+  }'
+```
+
+---
+
+## Delete Response
+
+```http
+DELETE /api/events/:eventId/response
+```
+
+Removes a respondent's availability from an event.
+
+<ParamField body="guest" type="boolean" required>
+  `true` for guests; `false` for signed-in users.
+</ParamField>
+
+<ParamField body="name" type="string">
+  Guest name to remove. Required when `guest` is `true`.
+</ParamField>
+
+<ParamField body="userId" type="string">
+  The user ID whose response to delete. Required when `guest` is `false` and a signed-in user is removing another user's response (owner-only action).
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Rename Guest Response
+
+```http
+POST /api/events/:eventId/rename-user
+```
+
+Renames a guest respondent across all stored responses for the event.
+
+<ParamField body="oldName" type="string">
+  The current guest name to replace.
+</ParamField>
+
+<ParamField body="newName" type="string">
+  The new display name.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Mark Remindee as Responded
+
+```http
+POST /api/events/:eventId/responded
+```
+
+Marks the given email address as having responded to the event. This cancels the pending reminder email tasks for that address. If all remindees have responded, the event owner receives a "everyone responded" email.
+
+<ParamField body="email" type="string" required>
+  Email address of the remindee to mark as responded.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Decline Invite (Availability Groups)
+
+```http
+POST /api/events/:eventId/decline
+```
+
+<Note>
+Requires authentication. Only valid for events with `type: "group"`.
+</Note>
+
+Sets the `declined` flag to `true` for the current user in the event's attendees list. The user is removed from the group without deleting their existing response.
+
+**Response `200 OK`:** Returns `{}`.
+
+---
+
+## Get Calendar Availabilities
+
+```http
+GET /api/events/:eventId/calendar-availabilities?timeMin=<ISO8601>&timeMax=<ISO8601>
+```
+
+<Note>
+Requires authentication. Only valid for events with `type: "group"`.
+</Note>
+
+Returns a map of `{ userId: [CalendarEvent, ...] }` for all group members who have opted in to calendar-based availability (`useCalendarAvailability: true`). Events belonging to other users have their `summary` redacted to `"BUSY"`.
+
+**Query Parameters:**
+
+| Parameter | Type     | Required | Description         |
+|-----------|----------|----------|---------------------|
+| `timeMin` | ISO 8601 | ✅       | Start of the window |
+| `timeMax` | ISO 8601 | ✅       | End of the window   |
+
+```bash
+curl -s -b cookies.txt \
+  "http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/calendar-availabilities?timeMin=2025-09-01T00:00:00Z&timeMax=2025-09-07T23:59:59Z"
+```
+
+---
+
+## Delete Event
+
+```http
+DELETE /api/events/:eventId
+```
+
+<Note>
+Requires authentication. The caller must be the event owner.
+</Note>
+
+If the event has responses from users other than the owner, the event is soft-deleted (`isDeleted: true`). If no such responses exist, the event and all folder associations are permanently removed.
+
+**Response `200 OK`:** No body.
+
+```bash
+curl -s -X DELETE http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd \
+  -b cookies.txt
+```
+
+---
+
+## Duplicate Event
+
+```http
+POST /api/events/:eventId/duplicate
+```
+
+<Note>
+Requires authentication. The caller must be the event owner.
+</Note>
+
+Creates a new event that is a copy of the original. A new short ID is generated automatically.
+
+<ParamField body="eventName" type="string" required>
+  Display name for the duplicated event.
+</ParamField>
+
+<ParamField body="copyAvailability" type="boolean" required>
+  When `true`, all existing responses are copied to the new event.
+</ParamField>
+
+**Response `201 Created`:**
+
+```json
+{ "eventId": "64b3f1a2c9e77f001234xxxx", "shortId": "xyz789" }
+```
+
+---
+
+## Archive Event
+
+```http
+POST /api/events/:eventId/archive
+```
+
+<Note>
+Requires authentication. The caller must be the event owner.
+</Note>
+
+Toggles the `isArchived` flag on an event. Archived events are hidden from the default event list but not deleted.
+
+<ParamField body="archive" type="boolean" required>
+  `true` to archive; `false` to unarchive.
+</ParamField>
+
+**Response `200 OK`:** No body.
+
+```bash
+curl -s -X POST http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/archive \
+  -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{ "archive": true }'
+```
+
+---
+
+## Event Object Reference
+
+<ResponseField name="_id" type="string">
+  MongoDB ObjectID of the event.
+</ResponseField>
+
+<ResponseField name="shortId" type="string">
+  Human-readable short identifier (used in `/e/:shortId` URLs).
+</ResponseField>
+
+<ResponseField name="ownerId" type="string">
+  ObjectID of the owning user, or null for guest-created events.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Event display name.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  `"specific_dates"`, `"dow"`, or `"group"`.
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Duration of the polling window in hours.
+</ResponseField>
+
+<ResponseField name="dates" type="datetime[]">
+  Candidate dates/slots.
+</ResponseField>
+
+<ResponseField name="numResponses" type="integer">
+  Cached count of responses.
+</ResponseField>
+
+<ResponseField name="isArchived" type="boolean">
+  Whether the event is archived.
+</ResponseField>
+
+<ResponseField name="isDeleted" type="boolean">
+  Whether the event is soft-deleted.
+</ResponseField>
+
+<ResponseField name="maxCapacityPerSlot" type="integer">
+  Maximum respondents per time slot (Columbia Math Department addition).
+</ResponseField>
+
+<ResponseField name="timeIncrement" type="integer">
+  Slot granularity in minutes.
+</ResponseField>

@@ -1,0 +1,222 @@
+---
+title: "Timeful Container Security Hardening Guide"
+sidebarTitle: "Security"
+description: "A full rundown of the security hardening built into Timeful's Docker images — non-root users, capability dropping, rootless runtimes, and best practices."
+---
+
+Timeful's Docker images and Compose files are hardened with defence-in-depth security controls. All three containers run as dedicated non-root users, drop every Linux capability they do not need, and prevent privilege escalation. These measures work automatically with both standard Docker and rootless runtimes (Docker rootless mode and Podman).
+
+---
+
+## Hardening Already in Place
+
+### Non-Root Container Users
+
+Every container runs as a dedicated low-privilege user. No service ever starts as `root`:
+
+| Container | User | UID |
+|-----------|------|-----|
+| `backend` | `appuser` | 1000 |
+| `frontend` | `nginx` | 101 |
+| `mongodb` | `mongodb` | 999 |
+
+These UIDs are fixed across environments. Docker and Podman user-namespace mapping handles the translation automatically in rootless mode — no manual `chown` is required for named volumes.
+
+### Capability Dropping
+
+The `docker-compose.yml` files drop all Linux capabilities by default (`cap_drop: ALL`) and add back only the minimum set required for each service:
+
+| Container | Capabilities Added Back |
+|-----------|------------------------|
+| `backend` | *(none — runs with zero capabilities)* |
+| `frontend` | `NET_BIND_SERVICE`, `CHOWN`, `SETGID`, `SETUID` |
+| `mongodb` | `CHOWN`, `SETGID`, `SETUID` |
+
+`NET_BIND_SERVICE` allows nginx to bind to port 80 inside the container without root. `CHOWN`, `SETGID`, and `SETUID` allow MongoDB and nginx to set up file ownership on startup.
+
+### No New Privileges
+
+All containers set the `no-new-privileges: true` security option. This prevents any process inside the container — including setuid binaries — from gaining capabilities that were not present at container start time.
+
+### Read-Only Config Mounts
+
+`config.js` (the frontend runtime configuration that carries `googleClientId` and `microsoftClientId`) is mounted read-only into the frontend container:
+
+```yaml
+volumes:
+  - ./frontend/public/config.js:/usr/share/nginx/html/config.js:ro
+```
+
+This prevents a compromised frontend process from altering OAuth credentials at runtime.
+
+---
+
+## Rootless Container Support
+
+The same Compose files work without modification under rootless runtimes.
+
+### Docker Rootless Mode
+
+```bash
+# Install Docker in rootless mode (one-time setup)
+dockerd-rootless-setuptool.sh install
+
+# Use Docker normally — UID/GID namespace mapping is automatic
+docker compose up -d
+```
+
+### Podman (Rootless by Default)
+
+Podman runs rootless out of the box. No extra flags are needed:
+
+```bash
+podman-compose up -d
+```
+
+For systemd integration, see the Podman Quadlets documentation. Security options (`no-new-privileges`, `cap_drop`) are supported in quadlet container files using the `SecurityLabelDisable` and `AddCapability` / `DropCapability` directives.
+
+---
+
+## Security Checklist
+
+Use this checklist before exposing Timeful to the internet:
+
+<Steps>
+  <Step title="Generate a strong encryption key">
+    The `ENCRYPTION_KEY` is used to encrypt sensitive data in MongoDB. Generate it with:
+
+    ```bash
+    openssl rand -base64 32
+    ```
+
+    Store the output in your `.env` file or secret manager. If you lose this key, encrypted data becomes unrecoverable.
+  </Step>
+
+  <Step title="Enable HTTPS via a reverse proxy">
+    Never expose port 3002 directly to the internet. Terminate TLS at a reverse proxy (Nginx, Caddy, Traefik) and proxy to `localhost:3002`.
+
+    Caddy example (automatic HTTPS):
+
+    ```caddyfile
+    timeful.example.com {
+        reverse_proxy localhost:3002
+    }
+    ```
+
+    Nginx minimal TLS example:
+
+    ```nginx
+    server {
+        listen 443 ssl http2;
+        server_name timeful.example.com;
+        ssl_certificate /path/to/cert.pem;
+        ssl_certificate_key /path/to/key.pem;
+
+        location / {
+            proxy_pass http://localhost:3002;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Keep OAuth credentials out of version control">
+    `CLIENT_ID`, `CLIENT_SECRET`, `MICROSOFT_CLIENT_ID`, and `MICROSOFT_CLIENT_SECRET` must never be committed to git. Keep them in `.env` (which is listed in `.gitignore`) or inject them as CI/CD secrets.
+  </Step>
+
+  <Step title="Use Docker secrets for sensitive env vars in production">
+    In high-security environments, replace plaintext `.env` values with Docker secrets:
+
+    ```bash
+    echo "your-encryption-key" | docker secret create timeful_encryption_key -
+    ```
+
+    Then reference the secret in `docker-compose.yml` instead of setting the variable directly.
+  </Step>
+
+  <Step title="Back up MongoDB regularly">
+    Run `make backup` before every update and on a scheduled cron. See [Updates & Backups](/deployment/updates-backups) for a recommended schedule.
+  </Step>
+
+  <Step title="Keep Docker images up to date">
+    Pull and restart on a regular cadence to pick up security patches in the base images (Go Alpine, nginx Alpine, MongoDB):
+
+    ```bash
+    make pull-ghcr
+    ```
+  </Step>
+
+  <Step title="Add CPU and memory resource limits">
+    Prevent a single container from exhausting host resources. Add to each service in `docker-compose.yml`:
+
+    ```yaml
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Verification Commands
+
+Run these checks to confirm the security configuration is active in a running stack:
+
+```bash
+# Verify all containers run as non-root
+docker compose exec backend id
+# Expected: uid=1000(appuser) gid=1000(appuser) groups=1000(appuser)
+
+docker compose exec frontend id
+# Expected: uid=101(nginx) gid=101(nginx) groups=101(nginx)
+
+docker compose exec mongodb id
+# Expected: uid=999(mongodb) gid=999(mongodb) groups=999(mongodb)
+
+# Verify capability drops on the backend container
+docker inspect timeful-backend | grep -A 20 CapDrop
+
+# Check no-new-privileges is set
+docker inspect timeful-backend | grep -A 5 SecurityOpt
+```
+
+Expected `SecurityOpt` output:
+
+```json
+"SecurityOpt": [
+    "no-new-privileges:true"
+]
+```
+
+---
+
+## Network Segmentation
+
+All three containers communicate over the internal `timeful-network` bridge. The backend container has **no published ports** — it is only reachable by the frontend container (and any other service on the same Docker network). Traffic from the internet reaches the frontend (port 3002 on the host), and the frontend proxies `/api` requests to the backend over the internal network.
+
+```
+Internet → host:3002 → frontend:80 → backend:3002 (internal only)
+                                    → mongodb:27017 (internal only)
+```
+
+This means that even if the backend has a vulnerability, it is not directly reachable from outside the host.
+
+---
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card icon="box" href="/self-hosting/docker" title="Docker Deployment">
+    Initial setup, Compose files, and configuration reference.
+  </Card>
+  <Card icon="wrench" href="/operations/troubleshooting" title="Troubleshooting">
+    Solutions to the most common runtime issues.
+  </Card>
+</CardGroup>

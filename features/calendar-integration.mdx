@@ -1,0 +1,215 @@
+---
+title: "Connect Your Calendar to Timeful"
+sidebarTitle: "Calendar Integration"
+description: "Link Google Calendar, Microsoft Outlook, or Apple Calendar so Timeful can auto-fill your availability grid from your real schedule — read-only, never writes."
+---
+
+Calendar integration lets participants skip the tedious drag-to-mark step. Once a calendar account is connected, Timeful reads existing events from your calendar and automatically fills in the availability grid — marking you as busy wherever you have conflicting appointments. Timeful only ever **reads** calendar data; it never creates, modifies, or deletes events without your explicit action.
+
+## Supported Calendar Providers
+
+<CardGroup cols={3}>
+  <Card title="Google Calendar" icon="google" href="/features/calendar-integration">
+    Connect any Google Workspace or personal Gmail account. Supports multiple Google accounts simultaneously.
+  </Card>
+  <Card title="Microsoft Outlook / 365" icon="microsoft" href="/features/calendar-integration">
+    Connect Outlook.com, Hotmail, or Microsoft 365 organizational accounts via Microsoft Graph.
+  </Card>
+  <Card title="Apple Calendar" icon="apple" href="/features/calendar-integration">
+    Connect iCloud calendars via CalDAV using your Apple ID email and an app-specific password.
+  </Card>
+</CardGroup>
+
+The calendar type is stored as a `CalendarType` string on each `CalendarAccount` record in the `User` document:
+
+```go
+// From server/models/calendar.go
+const (
+    AppleCalendarType   CalendarType = "apple"
+    GoogleCalendarType  CalendarType = "google"
+    OutlookCalendarType CalendarType = "outlook"
+)
+```
+
+## How It Works
+
+<Steps>
+  <Step title="Authorize your calendar account">
+    Click **Add Calendar** on the event page or in your account settings. Timeful redirects you to the provider's OAuth consent screen (or prompts for CalDAV credentials for Apple).
+  </Step>
+  <Step title="Timeful fetches your events">
+    After authorization, Timeful calls the calendar API read-only to retrieve your events for the date range covered by the poll. Events are stored as `CalendarEvent` objects in memory — they are never persisted to the Timeful database.
+  </Step>
+  <Step title="Availability grid is auto-filled">
+    Timeful marks every time slot occupied by a calendar event as busy, pre-filling the grid on your behalf. You can review and adjust before submitting.
+  </Step>
+  <Step title="Toggle sub-calendars">
+    If your account has multiple sub-calendars (e.g., "Work", "Personal", "Birthdays"), you can toggle each one on or off so only relevant calendars contribute to your availability.
+  </Step>
+</Steps>
+
+## OAuth Scopes and Permissions
+
+Timeful requests the minimum read-only permissions required. No write access is ever requested.
+
+<Tabs>
+  <Tab title="Google Calendar">
+    The following OAuth 2.0 scopes are requested when a user connects a Google account:
+
+    | Scope | Purpose |
+    |---|---|
+    | `https://www.googleapis.com/auth/calendar.events.readonly` | Read calendar events to detect conflicts |
+    | `https://www.googleapis.com/auth/calendar.calendarlist.readonly` | List available sub-calendars for the toggle UI |
+    | `https://www.googleapis.com/auth/contacts.readonly` | Suggest contacts when adding attendees to a poll |
+
+    These are configured in your Google Cloud project's OAuth consent screen. See [Self-Hosting Configuration](/self-hosting/configuration) for step-by-step setup.
+  </Tab>
+  <Tab title="Microsoft Outlook / 365">
+    The following Microsoft Graph delegated permissions are requested:
+
+    | Permission | Purpose |
+    |---|---|
+    | `offline_access` | Obtain a refresh token so Timeful can re-authenticate without requiring repeated logins |
+    | `User.Read` | Read the user's profile (name and email) to populate the `CalendarAccount` record |
+    | `Calendars.Read` | Read calendar events to detect conflicts |
+
+    These permissions are configured in your Azure App Registration. Admin consent is optional but recommended for organizational Microsoft 365 deployments — without it, each user is prompted for individual consent on first use.
+
+    See [Self-Hosting Configuration](/self-hosting/configuration) for Azure App Registration setup instructions.
+  </Tab>
+  <Tab title="Apple Calendar">
+    Apple Calendar uses **CalDAV** rather than OAuth. Users provide:
+
+    - Their **Apple ID email address**
+    - An **app-specific password** generated at [appleid.apple.com](https://appleid.apple.com) (Apple does not allow direct Apple ID passwords for third-party CalDAV access)
+
+    Credentials are stored encrypted in MongoDB using the `ENCRYPTION_KEY` from your `.env` file. The `AppleCalendarAuth` struct holds these credentials server-side and is never exposed in API responses (all auth fields are tagged `json:"-"`):
+
+    ```go
+    // From server/models/calendar.go
+    type AppleCalendarAuth struct {
+        Email    string `json:"-" bson:"email,omitempty"`
+        Password string `json:"-" bson:"password,omitempty"`
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Multiple Calendar Accounts
+
+Users can link multiple calendar accounts — including multiple Google accounts, an Outlook account, and an Apple account — all at the same time. Each account is stored as a separate entry in the `CalendarAccounts` map on the `User` document, keyed by `{email}_{calendarType}`:
+
+```go
+// From server/models/user.go
+// CalendarAccounts is a mapping from {`email_CALENDARTYPE` => CalendarAccount}
+CalendarAccounts map[string]CalendarAccount `json:"calendarAccounts" bson:"calendarAccounts,omitempty"`
+```
+
+For example, a user with two Google accounts and one Outlook account would have three entries:
+
+```
+alice@gmail.com_google
+alice@columbia.edu_google
+alice@outlook.com_outlook
+```
+
+The account the user first signed in with is tracked separately as `primaryAccountKey`.
+
+## Sub-Calendar Toggling
+
+Within each linked account, Timeful discovers all sub-calendars (e.g., Google's "Work", "Personal", "US Holidays") and lists them in the calendar settings panel. Each `SubCalendar` entry has an `enabled` flag:
+
+```go
+// From server/models/calendar.go
+type SubCalendar struct {
+    Name    string `json:"name" bson:"name,omitempty"`
+    Enabled *bool  `json:"enabled" bson:"enabled,omitempty"`
+}
+```
+
+Participants can disable sub-calendars that shouldn't count against their availability (e.g., turn off a "Birthdays" calendar so birthday reminders don't block time slots).
+
+## Calendar Options
+
+Additional autofill behavior is controlled by `CalendarOptions` on the `User` document and updated via `PATCH /api/user/calendar-options`:
+
+```go
+// From server/models/calendar.go
+type CalendarOptions struct {
+    BufferTime   BufferTimeOptions   `json:"bufferTime" bson:"bufferTime"`
+    WorkingHours WorkingHoursOptions `json:"workingHours" bson:"workingHours"`
+}
+
+type BufferTimeOptions struct {
+    Enabled bool `json:"enabled" bson:"enabled"`
+    Time    int  `json:"time" bson:"time"` // minutes
+}
+
+type WorkingHoursOptions struct {
+    Enabled   bool    `json:"enabled" bson:"enabled"`
+    StartTime float32 `json:"startTime" bson:"startTime"` // hour of day, e.g. 9.0
+    EndTime   float32 `json:"endTime" bson:"endTime"`     // hour of day, e.g. 17.0
+}
+```
+
+| Option | Description |
+|---|---|
+| **Buffer time** | Add N minutes of padding before and after each calendar event when calculating availability, so back-to-back meetings leave breathing room. |
+| **Working hours** | Only count availability within a defined start/end hour window each day, regardless of what the calendar shows outside those hours. |
+
+## Setting Up OAuth for Self-Hosted Deployments
+
+<Tabs>
+  <Tab title="Google OAuth Setup">
+    To enable Google Calendar integration on your self-hosted instance:
+
+    1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create or select a project.
+    2. Enable **Google Calendar API** and **Google People API** for the project.
+    3. Navigate to **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**.
+    4. Set the application type to **Web application**.
+    5. Add the authorized redirect URI: `https://yourdomain.com/api/auth/google/callback`
+    6. Copy the **Client ID** and **Client Secret** into your `.env` file:
+       ```bash
+       CLIENT_ID=your_google_client_id
+       CLIENT_SECRET=your_google_client_secret
+       ```
+    7. Set `BASE_URL=https://yourdomain.com` so the callback URL matches.
+
+    For full details, see [Self-Hosting Configuration](/self-hosting/configuration).
+  </Tab>
+  <Tab title="Microsoft OAuth Setup">
+    To enable Outlook / Microsoft 365 integration on your self-hosted instance:
+
+    1. Go to [Azure Portal](https://portal.azure.com/) → **Azure Active Directory → App registrations → New registration**.
+    2. Set the supported account types to **Accounts in any organizational directory and personal Microsoft accounts**.
+    3. Add the redirect URI (Web platform): `https://yourdomain.com/auth`
+    4. After registration, copy the **Application (client) ID** to `MICROSOFT_CLIENT_ID`.
+    5. Under **Certificates & secrets**, create a new client secret and copy the value to `MICROSOFT_CLIENT_SECRET`.
+    6. Under **API permissions**, add the following **Microsoft Graph delegated** permissions:
+       - `offline_access`
+       - `User.Read`
+       - `Calendars.Read`
+    7. Optionally, click **Grant admin consent** if you are a Microsoft 365 admin and want to skip per-user consent prompts.
+
+    Set the env vars in your `.env` file:
+    ```bash
+    MICROSOFT_CLIENT_ID=your_azure_app_client_id
+    MICROSOFT_CLIENT_SECRET=your_azure_client_secret
+    ```
+
+    For full details, see [Self-Hosting Configuration](/self-hosting/configuration).
+  </Tab>
+</Tabs>
+
+<Note>
+  Calendar integration is optional. Without Google or Microsoft OAuth credentials configured, users can still create and respond to polls anonymously — they simply won't be able to auto-fill availability from their calendars.
+</Note>
+
+<CardGroup cols={2}>
+  <Card title="Availability Groups" icon="users" href="/features/availability-groups">
+    Use live calendar data to show real-time team availability without creating a new poll each time.
+  </Card>
+  <Card title="Self-Hosting Configuration" icon="gear" href="/self-hosting/configuration">
+    Full reference for all environment variables including OAuth credentials.
+  </Card>
+</CardGroup>

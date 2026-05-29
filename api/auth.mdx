@@ -1,0 +1,244 @@
+---
+title: "Auth API: Sign In, Sign Out, and Status"
+sidebarTitle: "Auth Endpoints"
+description: "Reference for all /api/auth endpoints: web sign-in, mobile sign-in, sign-out, session status, and the health check."
+---
+
+The Auth API handles everything related to session lifecycle — signing in via Google OAuth (web or mobile), signing out, and querying the current session state. All auth routes live under `/api/auth`. The health check lives directly under `/api`.
+
+---
+
+## Sign In (Web)
+
+```http
+POST /api/auth/sign-in
+```
+
+Exchanges a Google OAuth authorization code for a session cookie. If no user exists with the returned email, a new account is created. Otherwise the existing account's tokens and profile are updated.
+
+The response sets an encrypted `session` cookie that must be included in all subsequent authenticated requests.
+
+### Request Body
+
+<ParamField body="code" type="string" required>
+  The authorization code returned by Google's OAuth endpoint to your redirect URI.
+</ParamField>
+
+<ParamField body="scope" type="string" required>
+  The OAuth scope string returned alongside the authorization code.
+</ParamField>
+
+<ParamField body="calendarType" type="string" required>
+  Calendar provider for this sign-in. One of:
+
+  | Value       | Provider                    |
+  |-------------|-----------------------------|
+  | `"google"`  | Google Calendar (OAuth 2.0) |
+  | `"outlook"` | Microsoft Outlook (OAuth 2.0)|
+</ParamField>
+
+<ParamField body="timezoneOffset" type="integer" required>
+  The caller's UTC offset in minutes (e.g. `-300` for UTC−5).
+</ParamField>
+
+<ParamField body="eventsToLink" type="string[]">
+  Optional array of event ObjectID hex strings. Each event whose `ownerId` is currently `null` will be claimed by the newly signed-in user. Useful for associating a guest-created event with a newly registered account.
+</ParamField>
+
+**Response `200 OK`:** The signed-in `User` object.
+
+```bash
+curl -s -X POST http://localhost:3002/api/auth/sign-in \
+  -c cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "4/0AX4XfWh...",
+    "scope": "email profile https://www.googleapis.com/auth/calendar.readonly",
+    "calendarType": "google",
+    "timezoneOffset": -300
+  }'
+```
+
+---
+
+## Sign In (Mobile)
+
+```http
+POST /api/auth/sign-in-mobile
+```
+
+Signs in a mobile user by accepting OAuth tokens obtained directly from the Google Sign-In SDK (iOS / Android) rather than an authorization code.
+
+### Request Body
+
+<ParamField body="accessToken" type="string" required>
+  OAuth 2.0 access token obtained from the mobile SDK.
+</ParamField>
+
+<ParamField body="scope" type="string" required>
+  OAuth scope string.
+</ParamField>
+
+<ParamField body="idToken" type="string" required>
+  JWT ID token containing user profile claims (`email`, `given_name`, `family_name`, `picture`).
+</ParamField>
+
+<ParamField body="expiresIn" type="integer" required>
+  Seconds until the access token expires.
+</ParamField>
+
+<ParamField body="refreshToken" type="string" required>
+  OAuth 2.0 refresh token.
+</ParamField>
+
+<ParamField body="tokenOrigin" type="string" required>
+  Platform the token originated from. One of:
+
+  | Value       | Platform    |
+  |-------------|-------------|
+  | `"ios"`     | iOS app     |
+  | `"android"` | Android app |
+  | `"web"`     | Browser     |
+</ParamField>
+
+<ParamField body="calendarType" type="string" required>
+  Calendar provider: `"google"` or `"outlook"`.
+</ParamField>
+
+<ParamField body="timezoneOffset" type="integer" required>
+  The caller's UTC offset in minutes.
+</ParamField>
+
+**Response `200 OK`:** Returns `{}`. The session cookie is set on the response.
+
+```bash
+curl -s -X POST http://localhost:3002/api/auth/sign-in-mobile \
+  -c cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accessToken": "ya29.a0...",
+    "scope": "email profile https://www.googleapis.com/auth/calendar.readonly",
+    "idToken": "eyJhbGciOiJSUzI1NiIs...",
+    "expiresIn": 3599,
+    "refreshToken": "1//0g...",
+    "tokenOrigin": "ios",
+    "calendarType": "google",
+    "timezoneOffset": 0
+  }'
+```
+
+---
+
+## Sign Out
+
+```http
+POST /api/auth/sign-out
+```
+
+Clears the `userId` key from the session, effectively invalidating the session cookie. No request body is required.
+
+**Response `200 OK`:** Returns `{}`.
+
+```bash
+curl -s -X POST http://localhost:3002/api/auth/sign-out \
+  -b cookies.txt
+```
+
+---
+
+## Auth Status
+
+```http
+GET /api/auth/status
+```
+
+<Note>
+This endpoint is protected by `middleware.AuthRequired()`. It returns `401` with `{ "error": "not-signed-in" }` if there is no valid session.
+</Note>
+
+Returns `200 {}` when the session is active. Use this as a lightweight check to determine whether the current cookie is still valid before making further authenticated calls.
+
+**Response `200 OK`:** Returns `{}`.
+
+**Response `401 Unauthorized`:**
+
+```json
+{ "error": "not-signed-in" }
+```
+
+```bash
+curl -s -b cookies.txt http://localhost:3002/api/auth/status
+```
+
+---
+
+## Health Check
+
+```http
+GET /api/health
+```
+
+No authentication required. Returns the server's health status. Suitable for use as a container health check in Railway, Docker Compose, or Kubernetes.
+
+**Response `200 OK`:**
+
+```json
+{ "status": "ok" }
+```
+
+```bash
+curl -s http://localhost:3002/api/health
+```
+
+---
+
+## CalendarType Reference
+
+Defined in `models/calendar.go`:
+
+| JSON value   | Constant              | Provider                        |
+|--------------|-----------------------|---------------------------------|
+| `"google"`   | `GoogleCalendarType`  | Google Calendar via OAuth 2.0   |
+| `"outlook"`  | `OutlookCalendarType` | Microsoft Outlook via OAuth 2.0 |
+| `"apple"`    | `AppleCalendarType`   | Apple Calendar via app password |
+
+<Note>
+The `"apple"` calendar type is only used when adding a secondary calendar account via [`POST /api/user/add-apple-calendar-account`](/api/user#add-apple-calendar-account). It is not a valid sign-in `calendarType` for `/api/auth/sign-in`.
+</Note>
+
+## TokenOrigin Reference
+
+Defined in `models/user.go`:
+
+| JSON value   | Constant   | Meaning                     |
+|--------------|------------|-----------------------------|
+| `"web"`      | `WEB`      | Browser-based sign-in       |
+| `"ios"`      | `IOS`      | iOS app sign-in             |
+| `"android"`  | `ANDROID`  | Android app sign-in         |
+
+---
+
+## Full Sign-In + Status Example
+
+```bash
+# 1. Sign in and save the session cookie
+curl -s -X POST http://localhost:3002/api/auth/sign-in \
+  -c cookies.txt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "4/0AX4XfWh...",
+    "scope": "email profile https://www.googleapis.com/auth/calendar.readonly",
+    "calendarType": "google",
+    "timezoneOffset": -300
+  }'
+
+# 2. Verify the session is active
+curl -s -b cookies.txt http://localhost:3002/api/auth/status
+
+# 3. Sign out
+curl -s -X POST http://localhost:3002/api/auth/sign-out -b cookies.txt
+
+# 4. Confirm session is gone
+curl -s -b cookies.txt http://localhost:3002/api/auth/status
+# Returns: { "error": "not-signed-in" }
+```

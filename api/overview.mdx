@@ -1,0 +1,126 @@
+---
+title: "Timeful REST API Overview and Conventions"
+sidebarTitle: "Overview"
+description: "Base URL, HTTP methods, authentication model, error format, CORS policy, and a Swagger UI reference for the Timeful REST API."
+---
+
+The Timeful backend exposes a REST API rooted at `/api`. The server is built with Go and the [Gin](https://gin-gonic.com) web framework, and it runs on port **3002** by default (overridable via the `PORT` environment variable). Interactive documentation is available at [`/swagger/index.html`](http://localhost:3002/swagger/index.html) whenever the backend is running.
+
+## Base URL
+
+All API endpoints live under the `/api` prefix:
+
+```
+http://localhost:3002/api
+```
+
+| Resource    | Example path              |
+|-------------|---------------------------|
+| Events      | `/api/events`             |
+| Auth        | `/api/auth/sign-in`       |
+| User        | `/api/user/profile`       |
+| Folders     | `/api/user/folders`       |
+
+## Authentication
+
+Timeful uses **session-based authentication via cookies**. Signing in through `/api/auth/sign-in` sets an encrypted session cookie; subsequent requests from the same browser or HTTP client automatically include that cookie. Routes that require authentication are protected by the `middleware.AuthRequired()` middleware, which responds with `401` when no valid session is present.
+
+See the [Authentication](/api/authentication) page for a full walkthrough.
+
+## Content-Type
+
+All request bodies must be sent as JSON:
+
+```
+Content-Type: application/json
+```
+
+## HTTP Methods
+
+The API uses standard HTTP methods:
+
+| Method   | Typical use                        |
+|----------|------------------------------------|
+| `GET`    | Retrieve a resource                |
+| `POST`   | Create a resource or trigger action|
+| `PUT`    | Replace a resource entirely        |
+| `PATCH`  | Partially update a resource        |
+| `DELETE` | Remove a resource                  |
+
+## Health Check
+
+A lightweight health endpoint requires no authentication and is suitable for container health checks (Railway, Docker, etc.):
+
+```http
+GET /api/health
+```
+
+**Response `200 OK`:**
+
+```json
+{ "status": "ok" }
+```
+
+## Response Format
+
+Successful responses return JSON objects or arrays:
+
+```json
+{ "eventId": "64b3f1a2c9e77f001234abcd", "shortId": "abc123" }
+```
+
+## Error Format
+
+All errors follow a consistent shape:
+
+```json
+{ "error": "event-not-found" }
+```
+
+Common error strings (defined in `errs/errors.go`):
+
+| String                    | Meaning                                    |
+|---------------------------|--------------------------------------------|
+| `not-signed-in`           | Request requires authentication            |
+| `user-does-not-exist`     | Session references a deleted account       |
+| `event-not-found`         | Event ID does not match any record         |
+| `user-not-event-owner`    | Caller does not own the event              |
+| `invalid-credentials`     | Apple calendar credentials rejected        |
+
+## Swagger UI
+
+When the backend is running locally, the full OpenAPI specification is browsable at:
+
+```
+http://localhost:3002/swagger/index.html
+```
+
+## CORS
+
+CORS is configured in `main.go`. The following origins are **always** allowed:
+
+- `http://localhost:3002`
+- `http://localhost:8080`
+
+Additional origins can be added at runtime via the `CORS_ALLOWED_ORIGINS` environment variable (comma-separated). When that variable is not set, the default Timeful production domains (`timeful.app`, `schej.it`) are also permitted.
+
+Allowed methods: `GET`, `POST`, `PATCH`, `PUT`, `DELETE`  
+Allowed headers: `Content-Type`  
+Credentials: `true` (required for cookie-based sessions)
+
+## Endpoint Groups
+
+<CardGroup cols={2}>
+  <Card title="Events" icon="calendar-days" href="/api/events">
+    Create, fetch, edit, respond to, and delete availability polls.
+  </Card>
+  <Card title="User" icon="user" href="/api/user">
+    Profile management, calendar accounts, and event listings.
+  </Card>
+  <Card title="Folders" icon="folder" href="/api/folders">
+    Organize events into named folders with optional color labels.
+  </Card>
+  <Card title="Auth Endpoints" icon="key" href="/api/auth">
+    Sign in (web & mobile), sign out, and session status.
+  </Card>
+</CardGroup>

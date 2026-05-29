@@ -1,0 +1,190 @@
+---
+title: "How Timeful Is Built: Architecture Overview"
+sidebarTitle: "Architecture"
+description: "A deep dive into Timeful's three-container Docker topology, Go backend layout, Vue 2 frontend structure, and the key patterns that tie them together."
+---
+
+Timeful is a classic three-tier web application: a Vue 2 single-page app communicates with a Go REST API, which in turn reads and writes to MongoDB. In production the three tiers run as isolated Docker containers on a private bridge network, with only the Nginx-fronted web port exposed to the host. Understanding this layout is useful whether you are debugging a deployment, contributing a feature, or integrating with the API.
+
+## Docker Architecture
+
+The default `docker-compose.yml` defines three services that communicate over the `timeful-network` bridge:
+
+```text
+Host machine
+└── port 3002 ──► timeful-frontend  (Nginx, port 80 internal)
+                       │
+                       │ proxy /api/* → http://backend:3002
+                       ▼
+                  timeful-backend   (Go/Gin, port 3002, not exposed to host)
+                       │
+                       │ mongodb://mongodb:27017
+                       ▼
+                  timeful-mongodb   (MongoDB 6.0, port 27017, not exposed to host)
+```
+
+<Note>
+  In the separated-container production layout, the backend's port `3002` is declared with `expose` (container-internal only) rather than `ports` (host-mapped). Only the frontend container binds to `0.0.0.0:3002` on the host. The Go server detects the absence of `../frontend/dist` at startup and switches to API-only mode, returning a JSON 404 for any non-API route.
+</Note>
+
+### Container Details
+
+<Accordion title="timeful-mongodb — MongoDB 6.0">
+  - **Image:** `mongo:6.0`
+  - **Internal port:** `27017` (not published to host in production)
+  - **Database name:** `schej-it`
+  - **Volumes:** `mongodb_data:/data/db`, `mongodb_config:/data/configdb`
+  - **Health check:** `mongosh localhost:27017/test --quiet` with a 10-second interval and 5 retries
+  - **Security:** Runs as UID/GID `999` (the official MongoDB user), drops all Linux capabilities except `CHOWN`, `SETGID`, and `SETUID`, and sets `no-new-privileges:true`
+</Accordion>
+
+<Accordion title="timeful-backend — Go/Gin API">
+  - **Image (GHCR):** `ghcr.io/lillenne/timeful.app/backend:latest`
+  - **Internal port:** `3002` (exposed only within `timeful-network`)
+  - **Depends on:** `mongodb` (waits for `service_healthy`)
+  - **Gin mode:** `release` (set via `GIN_MODE` environment variable)
+  - **Logs:** Persisted to the `backend_logs` volume at `/app/logs`
+  - **Security:** Runs as UID/GID `1000`, drops all Linux capabilities, sets `no-new-privileges:true`
+</Accordion>
+
+<Accordion title="timeful-frontend — Nginx + Vue 2 SPA">
+  - **Image (GHCR):** `ghcr.io/lillenne/timeful.app/frontend:latest`
+  - **Published port:** `3002:80` — host port `3002` maps to Nginx on port `80`
+  - **Nginx role:** Serves the compiled Vue 2 `dist/` bundle and reverse-proxies all `/api/*` requests to `http://backend:3002/api/*`
+  - **Depends on:** `backend`
+  - **Config injection:** `config.js` is bind-mounted into `/app/public/config.js` at runtime, allowing OAuth client IDs to be changed without rebuilding the image
+</Accordion>
+
+## Backend Structure (`/server`)
+
+The Go backend is organized into focused packages. The entry point is `main.go`, which sets up the Gin router, registers all route groups, connects to MongoDB, and starts the HTTP server on port `3002`.
+
+### Package Reference
+
+<CardGroup cols={2}>
+  <Card title="routes/" icon="route" href="/api/overview">
+    One file per resource — `auth.go`, `events.go`, `user.go`, `folders.go`, `analytics.go`, `stripe.go`. Each file exports an `Init*` function called from `main.go` that registers all HTTP handlers for that resource under the `/api` prefix.
+  </Card>
+  <Card title="services/" icon="gears" href="/api/overview">
+    External integrations. The `calendar/` sub-package defines a `CalendarProvider` interface implemented by Google, Outlook, and Apple adapters. Async helpers (`GetCalendarEventsAsync`, `GetCalendarListAsync`) use Go channels so multiple calendar accounts are fetched concurrently. The `auth/` sub-package handles OAuth token refresh logic.
+  </Card>
+  <Card title="models/" icon="database" href="/api/events">
+    MongoDB document schemas as Go structs with both `json` and `bson` struct tags. Key models: `Event` (with `EventType` constant `specific_dates | dow | group`), `User`, `Response`, `Attendee`, `Folder`, `SignUpBlock`, and `SignUpResponse`. The `SignUpBlock` struct carries an optional `Capacity *int` field — the Columbia Math Department addition.
+  </Card>
+  <Card title="db/" icon="server" href="/api/overview">
+    Database layer with global collection references initialized in `init.go`. Helper functions (`GetEventByEitherId`, `GetUserById`, etc.) are the single access point for MongoDB queries, keeping all BSON logic out of route handlers.
+  </Card>
+  <Card title="middleware/" icon="shield-halved" href="/api/authentication">
+    `AuthRequired()` is a Gin middleware that reads the `userId` key from the session cookie, looks up the user in MongoDB, and either injects `authUser` into the Gin context or aborts with HTTP 401. Route groups that require authentication wrap themselves with this middleware.
+  </Card>
+  <Card title="utils/" icon="wrench" href="/api/overview">
+    Stateless helper functions split across `utils.go` (general), `array_utils.go`, `db_utils.go`, `mail_utils.go`, and `request_utils.go`. The custom `errs/` package defines typed error constants (`NotSignedIn`, `UserDoesNotExist`, etc.) that middleware and handlers use for consistent error responses.
+  </Card>
+</CardGroup>
+
+### API Routes
+
+All routes are mounted under the `/api` prefix. The table below lists every route group registered in `main.go`:
+
+| Group | File | Description |
+|-------|------|-------------|
+| `/api/auth` | `routes/auth.go` | Google OAuth sign-in/sign-out, Microsoft OAuth, session management |
+| `/api/user` | `routes/user.go` | Fetch and update the authenticated user's profile and calendar accounts |
+| `/api/events` | `routes/events.go` | Create, read, update, delete availability polls and sign-up forms |
+| `/api/user/folders` | `routes/folders.go` | Organize events into named folders |
+| `/api/analytics` | `routes/analytics.go` | Internal usage metrics endpoints |
+| `/api/stripe` | `routes/stripe.go` | Stripe webhook and subscription management (no-op when `SELF_HOSTED_PREMIUM=true`) |
+
+<Tip>
+  Interactive documentation for all endpoints is served by Swagger UI at
+  `/swagger/index.html`. The spec is generated from Go doc comments and
+  kept in the `server/docs/` package.
+</Tip>
+
+### Swagger UI
+
+The Swagger handler is registered in `main.go` as:
+
+```go
+router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerfiles.Handler))
+```
+
+Navigate to `http://localhost:3002/swagger/index.html` when the backend is running to explore and test every API endpoint with the built-in "Try it out" feature.
+
+## Frontend Structure (`/frontend/src`)
+
+The Vue 2 SPA follows a conventional `views/` + `components/` split with Vuex for state and Vue Router for navigation.
+
+### `views/` — Route-Level Pages
+
+Each file in `views/` corresponds to a top-level Vue Router route:
+
+| File | Route | Purpose |
+|------|-------|---------|
+| `Home.vue` | `/` | Dashboard listing the authenticated user's events and groups |
+| `Event.vue` | `/e/:eventId` | Availability poll — respondents fill in their times; owner sees the heatmap |
+| `Group.vue` | `/g/:groupId` | Availability group — real-time calendar overlay for all group members |
+| `Settings.vue` | `/settings` | User profile, connected calendar accounts, notification preferences |
+| `Landing.vue` | *(public)* | Marketing landing page shown to unauthenticated visitors |
+| `Auth.vue` | `/auth` | OAuth callback handler for Microsoft sign-in |
+| `SignUp.vue` | `/s/:eventId` | Sign-up form view with named time blocks and capacity indicators |
+| `Friends.vue` | `/friends` | Manage friend/contact relationships |
+
+### `components/` — Reusable UI Components
+
+Components are organized into feature-specific sub-directories:
+
+| Directory | Contents |
+|-----------|----------|
+| `event/` | Availability grid, time-slot selector, response heatmap, attendee list |
+| `groups/` | Group member list, real-time availability overlay |
+| `home/` | Event cards, quick-create dialogs, folder navigation |
+| `settings/` | Calendar account connection, notification toggles |
+| `sign_up_form/` | Block editor, capacity counter, respondent list |
+| `schedule_overlap/` | Cross-event schedule comparison tools |
+| `calendar_permission_dialogs/` | Step-by-step OAuth permission request dialogs |
+| `landing/` | Feature marketing sections for the public landing page |
+| `pricing/` | Premium feature comparison table |
+| `general/` | Shared primitives: `Header.vue`, `Footer.vue`, `Logo.vue`, `Tooltip.vue`, etc. |
+
+### State & Routing
+
+- **Vuex store** (`/frontend/src/store/`) — holds the authenticated user object, event lists, and UI state (active dialog, snackbar queue). Components read from the store via `mapState` and dispatch actions for data fetching.
+- **Vue Router** (`/frontend/src/router/`) — client-side SPA routing. Nginx is configured to serve `index.html` for all non-asset paths so deep links work after a hard refresh.
+- **API services** (`/frontend/src/utils/services/`) — thin wrapper modules (one per backend resource) that call `fetch` or `axios` against `/api/*` and return typed response objects.
+
+## Key Architectural Patterns
+
+<Accordion title="Session-based authentication via cookies">
+  The backend uses `gin-contrib/sessions` with a cookie store. After a successful OAuth flow, `userId` is written into the encrypted session cookie. The `AuthRequired()` middleware reads this key on every authenticated request — there are no JWTs or API keys in the default setup. The session cookie is scoped to the domain, which means the frontend and backend must share an origin (or be proxied through the same Nginx host) for cookies to be sent correctly.
+</Accordion>
+
+<Accordion title="Calendar provider interface for parallel fetching">
+  `services/calendar/` defines a `CalendarProvider` interface with two methods: `GetCalendarList()` and `GetCalendarEvents(calendarId, timeMin, timeMax)`. Google, Microsoft Graph, and Apple all implement this interface. When a user has multiple connected accounts, the backend fans out a goroutine per account using the `GetCalendarEventsAsync` and `GetCalendarListAsync` helpers, each writing results to a Go channel. The main goroutine collects from the channel as results arrive, achieving parallel I/O without a thread-per-request model.
+</Accordion>
+
+<Accordion title="Event types: specific_dates, dow, and group">
+  The `EventType` constant in `models/event.go` drives how the availability grid is rendered:
+
+  - **`specific_dates`** — the poll spans an explicit list of calendar dates (e.g., Mon 3 Jun – Fri 7 Jun).
+  - **`dow`** — the poll spans recurring day-of-week columns (e.g., "every Mon / Wed / Fri") without binding to specific dates; useful for finding a recurring meeting slot.
+  - **`group`** — a live availability group that continuously reflects members' real calendar data rather than a one-time poll response.
+</Accordion>
+
+<Accordion title="Separated container deployment mode">
+  When the Go binary starts and `../frontend/dist` is absent (standard in the Docker Compose setup), it logs `"Frontend directory not found, skipping static file serving"` and registers a JSON 404 handler for all non-API routes. The frontend is served entirely by Nginx in its own container. This separation means the backend image has no Node.js toolchain and the frontend image has no Go runtime, keeping image sizes small and attack surfaces minimal.
+</Accordion>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Docker Self-Hosting" icon="docker" href="/self-hosting/docker">
+    Production Nginx reverse proxy configuration, SSL, custom domains, and CORS setup.
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api/overview">
+    Full endpoint documentation generated from the Swagger spec, with example requests and responses.
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Hardening checklist: encryption key rotation, container capabilities, HTTPS enforcement, and backup strategy.
+  </Card>
+</CardGroup>
