@@ -386,6 +386,10 @@ This action is irreversible. The user's events and responses are **not** automat
   Whether the user has an active premium subscription (or `SELF_HOSTED_PREMIUM=true` is set).
 </ResponseField>
 
+<ResponseField name="stripeCustomerId" type="string">
+  Stripe customer ID associated with the user's premium subscription. Absent for users who have never initiated a checkout.
+</ResponseField>
+
 <ResponseField name="numEventsCreated" type="integer">
   Number of events created this calendar month (computed at request time, not stored).
 </ResponseField>

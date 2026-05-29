@@ -1,7 +1,7 @@
 ---
 title: "Authenticate with the Timeful API"
 sidebarTitle: "Authentication"
-description: "How Timeful session cookies work, the two OAuth sign-in flows, protected vs. public endpoints, and how to check your auth status."
+description: "How Timeful session cookies work, the two OAuth sign-in flows (web and mobile), protected vs. public endpoints, and how to check your auth status."
 ---
 
 Timeful uses **session-based authentication**. When a user signs in, the server sets an encrypted cookie named `session`. Every subsequent request from the same browser or HTTP client automatically carries that cookie, allowing the server to identify the caller without requiring a token header.
@@ -21,7 +21,7 @@ Several endpoints work **without** signing in:
 - `POST /api/events/:eventId/response` — submit availability as a guest (pass `"guest": true`)
 - `DELETE /api/events/:eventId/response` — delete a guest response
 - `POST /api/events/:eventId/rename-user` — rename a guest respondent
-- `POST /api/events/:eventId/responded` — mark a remindee as responded
+- `POST /api/events/:eventId/responded` — mark a remindee as having responded
 
 ## Sign-In Flow (Web)
 

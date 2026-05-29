@@ -1,5 +1,5 @@
 ---
-title: "Availability Groups: Real-Time Team Scheduling"
+title: "Availability Groups: Real-Time Team Scheduling in Timeful"
 sidebarTitle: "Availability Groups"
 description: "Persistent groups that surface live calendar availability for your whole team — no new poll required every time you need to find a shared window."
 ---
@@ -73,7 +73,7 @@ type Attendee struct {
 | `Email` | The attendee's email address, used to look up their `CalendarAccount` data |
 | `Declined` | Set to `true` if the attendee has explicitly declined the group invitation |
 
-When the `hasResponded` field is populated on the `Event`, it is derived by checking whether the currently authenticated user's ID is in the `Attendees` collection for that event.
+When the `hasResponded` field is populated on the `Event`, it is derived by checking whether the currently authenticated user has a response record in the `EventResponses` collection for that event.
 
 ## Creating an Availability Group
 

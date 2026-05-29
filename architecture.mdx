@@ -1,10 +1,10 @@
 ---
-title: "How Timeful Is Built: Architecture Overview"
+title: "Timeful Architecture: Three-Container Docker Stack Explained"
 sidebarTitle: "Architecture"
 description: "A deep dive into Timeful's three-container Docker topology, Go backend layout, Vue 2 frontend structure, and the key patterns that tie them together."
 ---
 
-Timeful is a classic three-tier web application: a Vue 2 single-page app communicates with a Go REST API, which in turn reads and writes to MongoDB. In production the three tiers run as isolated Docker containers on a private bridge network, with only the Nginx-fronted web port exposed to the host. Understanding this layout is useful whether you are debugging a deployment, contributing a feature, or integrating with the API.
+Timeful is a classic three-tier web application: a Vue 2 single-page app communicates with a Go REST API, which in turn reads and writes to MongoDB. In the Docker Compose setup the three tiers run as isolated containers on a private bridge network; the frontend port (`3002`) and the MongoDB port (`27017`) are published to the host, while the backend API port is internal-only. Understanding this layout is useful whether you are debugging a deployment, contributing a feature, or integrating with the API.
 
 ## Docker Architecture
 
@@ -12,29 +12,29 @@ The default `docker-compose.yml` defines three services that communicate over th
 
 ```text
 Host machine
-└── port 3002 ──► timeful-frontend  (Nginx, port 80 internal)
-                       │
-                       │ proxy /api/* → http://backend:3002
-                       ▼
-                  timeful-backend   (Go/Gin, port 3002, not exposed to host)
-                       │
-                       │ mongodb://mongodb:27017
-                       ▼
-                  timeful-mongodb   (MongoDB 6.0, port 27017, not exposed to host)
+├── port 3002 ──► timeful-frontend  (Nginx, port 80 internal)
+│                      │
+│                      │ proxy /api/* → http://backend:3002
+│                      ▼
+│                 timeful-backend   (Go/Gin, port 3002, internal only)
+│                      │
+│                      │ mongodb://mongodb:27017
+│                      ▼
+└── port 27017 ─► timeful-mongodb   (MongoDB 6.0, port 27017 published to host)
 ```
 
 <Note>
-  In the separated-container production layout, the backend's port `3002` is declared with `expose` (container-internal only) rather than `ports` (host-mapped). Only the frontend container binds to `0.0.0.0:3002` on the host. The Go server detects the absence of `../frontend/dist` at startup and switches to API-only mode, returning a JSON 404 for any non-API route.
+  In the Docker Compose layout, the backend's port `3002` is declared with `expose` (container-internal only), while the frontend binds to `0.0.0.0:3002` on the host and MongoDB binds to `0.0.0.0:27017`. The Go server detects the absence of `../frontend/dist` at startup and switches to API-only mode, returning a JSON 404 for any non-API route.
 </Note>
 
 ### Container Details
 
 <Accordion title="timeful-mongodb — MongoDB 6.0">
   - **Image:** `mongo:6.0`
-  - **Internal port:** `27017` (not published to host in production)
+  - **Published port:** `27017:27017` (host port `27017` maps to the MongoDB container)
   - **Database name:** `schej-it`
   - **Volumes:** `mongodb_data:/data/db`, `mongodb_config:/data/configdb`
-  - **Health check:** `mongosh localhost:27017/test --quiet` with a 10-second interval and 5 retries
+  - **Health check:** `echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet` with a 10-second interval and 5 retries
   - **Security:** Runs as UID/GID `999` (the official MongoDB user), drops all Linux capabilities except `CHOWN`, `SETGID`, and `SETUID`, and sets `no-new-privileges:true`
 </Accordion>
 

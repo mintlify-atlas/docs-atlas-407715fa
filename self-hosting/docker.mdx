@@ -1,10 +1,10 @@
 ---
-title: "Deploy Timeful with Docker Compose"
+title: "Deploy Timeful with Docker Compose — Self-Hosting Guide"
 sidebarTitle: "Docker"
 description: "Self-host Timeful in minutes using Docker Compose. Choose between pre-built images from GHCR or building from source for custom deployments."
 ---
 
-Timeful ships as a three-container application — MongoDB, a Go backend, and an Nginx-served Vue.js frontend — all wired together with a single Docker Compose file. You can be running at `http://localhost:3002` in under five minutes using the pre-built images from GitHub Container Registry, or build everything locally if you need to customise the source.
+Timeful ships as a three-container application — MongoDB, a Go backend, and a Vue.js frontend — all wired together with a single Docker Compose file. You can be running at `http://localhost:3002` in under five minutes using the pre-built images from GitHub Container Registry (GHCR), or build everything locally if you need to customise the source.
 
 ## Prerequisites
 
@@ -34,6 +34,7 @@ cd timeful.app
 
     ```bash
     cp .env.example .env
+    cp config.example.js config.js
     # Generate and paste a secure key
     echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
     ```
@@ -62,7 +63,7 @@ cd timeful.app
     ```
   </Tab>
   <Tab title="Build from Source">
-    Use this path when you want to modify the source code or test local changes before deploying.
+    Use this path when you want to modify the source code or test local changes before deploying. The base `docker-compose.yml` runs the frontend as a Vue.js development server (`node:20-alpine`) rather than the production Nginx image.
 
     **Option A — Automated setup (recommended)**
 
@@ -83,6 +84,7 @@ cd timeful.app
 
     ```bash
     cp .env.example .env
+    cp config.example.js config.js
     # Edit .env and set at minimum ENCRYPTION_KEY
     docker compose up -d
     ```
@@ -110,7 +112,7 @@ Once the stack is healthy, open:
 | `http://localhost:3002/swagger/index.html` | Interactive API documentation |
 
 <Note>
-  The frontend container's Nginx proxy handles all `/api` and `/sockets/` traffic, so only a single port (`3002`) needs to be reachable from your browser. The backend container is intentionally not exposed to the host.
+  The frontend container proxies all `/api` and `/sockets/` traffic to the backend, so only a single port (`3002`) needs to be reachable from your browser. The backend container is intentionally not exposed to the host.
 </Note>
 
 ## Makefile Command Reference
@@ -120,6 +122,7 @@ The repository ships with a `Makefile` that wraps common Docker Compose operatio
 | Command | Description |
 |---------|-------------|
 | `make setup` | Run interactive initial setup via `docker-setup.sh` |
+| `make build` | Build Docker images from source |
 | `make up` | Start the stack (build from source) |
 | `make up-ghcr` | Start the stack using GHCR pre-built images |
 | `make down` | Stop all containers |
@@ -127,17 +130,23 @@ The repository ships with a `Makefile` that wraps common Docker Compose operatio
 | `make restart` | Restart all services |
 | `make restart-ghcr` | Restart services (GHCR variant) |
 | `make logs` | Follow logs for all services |
+| `make logs-ghcr` | Follow logs for all services (GHCR variant) |
 | `make logs-backend` | Follow backend logs only |
 | `make logs-frontend` | Follow frontend logs only |
 | `make logs-db` | Follow MongoDB logs only |
 | `make pull` | Pull source changes, rebuild, and restart |
 | `make pull-ghcr` | Pull latest GHCR images and restart |
 | `make status` | Show container status |
+| `make status-ghcr` | Show container status (GHCR variant) |
 | `make backup` | Dump MongoDB to `./backups/` |
 | `make restore` | Restore from the most recent backup |
 | `make shell-backend` | Open a shell in the backend container |
+| `make shell-frontend` | Open a shell in the frontend container |
 | `make shell-db` | Open a `mongosh` session against `schej-it` |
+| `make dev` | Start in development mode with live logs |
+| `make dev-build` | Build and start in development mode |
 | `make clean` | Stop containers **and delete all volumes** ⚠️ |
+| `make clean-ghcr` | Stop containers and delete volumes (GHCR variant) ⚠️ |
 
 ## Docker Image Tags
 
@@ -157,15 +166,25 @@ Both the backend and frontend images are published to GitHub Container Registry 
 
 ## Architecture
 
-The Compose stack runs three containers that communicate over an internal bridge network named `timeful-network`:
+The Compose stack runs three containers that communicate over an internal bridge network named `timeful-network`.
+
+**Pre-built images (`docker-compose.ghcr.yml`):**
 
 | Container | Image | Internal port | Host port |
-|-----------|-------|--------------|-----------|
+|-----------|-------|--------------:|----------:|
 | `timeful-mongodb` | `mongo:6.0` | `27017` | `27017` |
-| `timeful-backend` | `…/backend:latest` or built locally | `3002` | *(not exposed)* |
-| `timeful-frontend` | `…/frontend:latest` or built locally | `80` | `3002` |
+| `timeful-backend` | `ghcr.io/…/backend:latest` | `3002` | *(not exposed)* |
+| `timeful-frontend` | `ghcr.io/…/frontend:latest` (Nginx) | `80` | `3002` |
 
-The frontend Nginx container proxies `/api` and `/sockets/` to the backend, serves the pre-built Vue.js bundle from `/usr/share/nginx/html`, and caches static assets for one year.
+**Build from source (`docker-compose.yml`):**
+
+| Container | Image | Internal port | Host port |
+|-----------|-------|--------------:|----------:|
+| `timeful-mongodb` | `mongo:6.0` | `27017` | `27017` |
+| `timeful-backend` | built locally | `3002` | *(not exposed)* |
+| `timeful-frontend` | `node:20-alpine` (Vue dev server) | `8080` | `3002` |
+
+The production frontend (GHCR image) uses Nginx to proxy `/api` and `/sockets/` to the backend, serves the pre-built Vue.js bundle from `/usr/share/nginx/html`, and caches static assets for one year. The development frontend runs the Vue CLI dev server directly.
 
 <CardGroup cols={2}>
   <Card title="Configuration" icon="gear" href="/self-hosting/configuration">

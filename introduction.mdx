@@ -1,5 +1,5 @@
 ---
-title: "Timeful: Self-Hosted Group Scheduling Platform"
+title: "Timeful: Open-Source Self-Hosted Group Scheduling App"
 sidebarTitle: "Introduction"
 description: "Timeful is an open-source, self-hostable availability polling platform with calendar integration, built for teams who need full data ownership."
 ---
@@ -52,7 +52,7 @@ This repository is a fork of the upstream [timeful.app](https://timeful.app) pro
 | **Database** | MongoDB 6.0 |
 | **Infrastructure** | Docker Compose · Nginx |
 
-The backend exposes a JSON API on port `3002`, the frontend is a Vue 2 SPA served by Nginx, and all persistent data lives in a MongoDB volume. In the default Docker Compose configuration the entire stack runs as three containers on a private bridge network with only the frontend port exposed to the host.
+The backend exposes a JSON API on port `3002`, the frontend is a Vue 2 SPA served by Nginx, and all persistent data lives in a MongoDB volume. In the default Docker Compose configuration the entire stack runs as three containers on a private bridge network; the frontend port (`3002`) and MongoDB port (`27017`) are published to the host while the backend API port remains internal-only.
 
 ## License
 

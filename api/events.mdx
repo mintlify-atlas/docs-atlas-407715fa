@@ -1,7 +1,7 @@
 ---
 title: "Events API: Create and Manage Availability Polls"
 sidebarTitle: "Events"
-description: "Full reference for all /api/events endpoints: create, edit, respond, delete, duplicate, archive, and calendar availability."
+description: "Full reference for all /api/events endpoints: create, edit, respond, delete, duplicate, archive, and fetch calendar availability for groups."
 ---
 
 The Events API is the core of Timeful. It lets you create availability polls (specific dates, days-of-week, or availability groups), collect responses from signed-in users or guests, and query aggregated calendar availability.
@@ -97,6 +97,10 @@ On success, returns `201 Created` with the new event's IDs:
 
 <ParamField body="sendEmailAfterXResponses" type="integer">
   If set to a positive integer `N`, the owner receives a notification email after `N` responses are collected (fires once).
+</ParamField>
+
+<ParamField body="when2meetHref" type="string">
+  Optional URL of an existing When2meet poll to import. When set, the event displays a link to the original When2meet page.
 </ParamField>
 
 <ParamField body="collectEmails" type="boolean">
@@ -467,6 +471,14 @@ curl -s -X POST http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/archiv
   Event display name.
 </ResponseField>
 
+<ResponseField name="description" type="string">
+  Optional event description. Maximum 5,000 characters.
+</ResponseField>
+
+<ResponseField name="location" type="string">
+  Optional location string. Maximum 500 characters.
+</ResponseField>
+
 <ResponseField name="type" type="string">
   `"specific_dates"`, `"dow"`, or `"group"`.
 </ResponseField>
@@ -476,25 +488,105 @@ curl -s -X POST http://localhost:3002/api/events/64b3f1a2c9e77f001234abcd/archiv
 </ResponseField>
 
 <ResponseField name="dates" type="datetime[]">
-  Candidate dates/slots.
+  Candidate dates/slots as ISO 8601 datetime strings.
+</ResponseField>
+
+<ResponseField name="hasSpecificTimes" type="boolean">
+  When `true`, each date has a corresponding entry in `times` specifying the exact time window.
+</ResponseField>
+
+<ResponseField name="times" type="datetime[]">
+  Parallel array to `dates` with specific start times. Present when `hasSpecificTimes` is `true`.
+</ResponseField>
+
+<ResponseField name="notificationsEnabled" type="boolean">
+  When `true`, the event owner receives an email when someone responds.
+</ResponseField>
+
+<ResponseField name="sendEmailAfterXResponses" type="integer">
+  When positive, the owner receives a one-time email after this many responses are collected. Set to `-1` after the email fires.
+</ResponseField>
+
+<ResponseField name="when2meetHref" type="string">
+  URL of a linked When2meet poll, if set.
+</ResponseField>
+
+<ResponseField name="collectEmails" type="boolean">
+  When `true`, guests are prompted to provide their email address when responding.
+</ResponseField>
+
+<ResponseField name="timeIncrement" type="integer">
+  Slot granularity in minutes (e.g. `15`, `30`, `60`).
+</ResponseField>
+
+<ResponseField name="maxCapacityPerSlot" type="integer">
+  Maximum number of respondents per time slot. When a slot is full, further sign-ups are rejected.
+</ResponseField>
+
+<ResponseField name="isSignUpForm" type="boolean">
+  When `true`, the event is a sign-up form where respondents choose named blocks rather than free-form availability.
+</ResponseField>
+
+<ResponseField name="signUpMode" type="string">
+  Sign-up form mode string (used when `isSignUpForm` is `true`).
+</ResponseField>
+
+<ResponseField name="signUpBlocks" type="object[]">
+  Array of `SignUpBlock` objects (`{ _id, name, capacity, startDate, endDate }`).
+</ResponseField>
+
+<ResponseField name="signUpResponses" type="object">
+  Map of `{ userId/guestName: SignUpResponse }` for sign-up form events.
+</ResponseField>
+
+<ResponseField name="startOnMonday" type="boolean">
+  When `true`, the week view starts on Monday rather than Sunday. Applicable to `dow` events.
+</ResponseField>
+
+<ResponseField name="blindAvailabilityEnabled" type="boolean">
+  When `true`, respondents cannot see others' availability until they have submitted their own.
+</ResponseField>
+
+<ResponseField name="daysOnly" type="boolean">
+  When `true`, the poll collects day-level availability rather than time slots.
+</ResponseField>
+
+<ResponseField name="responses" type="object">
+  Map of `{ userId/guestName: Response }`. Populated by `GET /api/events/:eventId` with user profile info. Availability arrays are omitted in that endpoint; use `GET /api/events/:eventId/responses` for filtered availability.
 </ResponseField>
 
 <ResponseField name="numResponses" type="integer">
   Cached count of responses.
 </ResponseField>
 
+<ResponseField name="scheduledEvent" type="object">
+  A `CalendarEvent` object representing a scheduled meeting created from this poll, if one has been set.
+</ResponseField>
+
+<ResponseField name="calendarEventId" type="string">
+  ID of the calendar event associated with this poll's scheduled meeting.
+</ResponseField>
+
+<ResponseField name="remindees" type="object[]">
+  Array of `Remindee` objects (`{ email, responded }`). Each remindee receives a reminder email to respond.
+</ResponseField>
+
+<ResponseField name="attendees" type="object[]">
+  Array of `Attendee` objects for availability group events (`type: "group"`). Populated on `GET /api/events/:eventId`.
+</ResponseField>
+
+<ResponseField name="hasResponded" type="boolean">
+  For availability group events, indicates whether the authenticated user has already submitted availability. Populated on `GET /api/user/events`.
+</ResponseField>
+
 <ResponseField name="isArchived" type="boolean">
-  Whether the event is archived.
+  Whether the event is archived (hidden from the default event list).
 </ResponseField>
 
 <ResponseField name="isDeleted" type="boolean">
-  Whether the event is soft-deleted.
+  Whether the event is soft-deleted. Soft-deleted events retain responses but are excluded from user event listings.
 </ResponseField>
 
-<ResponseField name="maxCapacityPerSlot" type="integer">
-  Maximum respondents per time slot (Columbia Math Department addition).
-</ResponseField>
-
-<ResponseField name="timeIncrement" type="integer">
-  Slot granularity in minutes.
+<ResponseField name="creatorPosthogId" type="string">
+  Optional PostHog analytics ID for the event creator.
 </ResponseField>

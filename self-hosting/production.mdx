@@ -1,5 +1,5 @@
 ---
-title: "Run Timeful in Production with a Reverse Proxy"
+title: "Run Timeful in Production: Reverse Proxy and HTTPS Setup"
 sidebarTitle: "Production"
 description: "Configure Nginx or Caddy in front of Timeful, set a custom domain, enable HTTPS, and update your Google OAuth redirect URIs for production."
 ---
@@ -148,7 +148,7 @@ After your reverse proxy is serving traffic, update the backend to match your do
   <Step title="Update Google OAuth redirect URI">
     In [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials, edit your OAuth 2.0 Client ID and add the following **Authorised redirect URI**:
 
-    ```
+    ```text
     https://yourdomain.com/api/auth/google/callback
     ```
 

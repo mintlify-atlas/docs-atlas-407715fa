@@ -1,5 +1,5 @@
 ---
-title: "Availability Polls: Find the Best Meeting Time"
+title: "Availability Polls: Find the Best Meeting Time Fast"
 sidebarTitle: "Availability Polls"
 description: "Create a poll, share the link, and let participants mark their availability. Timeful finds the overlap so you can pick the best time to meet."
 ---
@@ -92,7 +92,7 @@ The `maxCapacityPerSlot` field is a **Columbia Math Department customization** t
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `maxCapacityPerSlot` | `*int` | `4` | Maximum number of people who can be marked available for a single time slot. `nil` means unlimited. |
+| `maxCapacityPerSlot` | `*int` | `nil` (UI default: `4`) | Maximum number of people who can be marked available for a single time slot. `nil` means unlimited; the new-event form pre-fills the input with `4`. |
 
 How it works:
 

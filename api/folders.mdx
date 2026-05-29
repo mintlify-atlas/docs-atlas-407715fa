@@ -1,7 +1,7 @@
 ---
 title: "Folders API: Organize Timeful Events"
 sidebarTitle: "Folders"
-description: "Create, list, retrieve, rename, recolor, and delete folders for organizing Timeful events — all under /api/user/folders."
+description: "Create, list, retrieve, rename, recolor, and delete folders for organizing Timeful events into named collections — all under /api/user/folders."
 ---
 
 Folders let users group their events into named, optionally color-coded collections. All folder endpoints are scoped to the authenticated user: a user can only read and modify their own folders.
@@ -232,6 +232,10 @@ Use [`POST /api/user/events/:eventId/set-folder`](/api/user#set-event-folder) fr
 
 <ResponseField name="color" type="string">
   Optional hex color string (e.g. `"#4f46e5"`). Absent when not set.
+</ResponseField>
+
+<ResponseField name="isDeleted" type="boolean">
+  When `true`, the folder has been soft-deleted. Soft-deleted folders are excluded from `GET /api/user/folders` results.
 </ResponseField>
 
 <ResponseField name="eventIds" type="string[]">

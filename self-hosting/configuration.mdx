@@ -1,5 +1,5 @@
 ---
-title: "Configure Timeful: Environment Variables Reference"
+title: "Configure Timeful: Environment Variables and config.js"
 sidebarTitle: "Configuration"
 description: "Complete reference for every Timeful environment variable and frontend config.js option, including minimal and full setup examples."
 ---
@@ -94,14 +94,26 @@ cp config.example.js config.js
 
 <ParamField body="LISTMONK_INITIAL_EMAIL_REMINDER_ID" type="string">
   Listmonk transactional template ID for the initial event reminder email.
+
+  <Note>
+    This variable is defined in `.env.example` but is not forwarded to the backend container in the default `docker-compose.yml` or `docker-compose.ghcr.yml`. To use it, add `- LISTMONK_INITIAL_EMAIL_REMINDER_ID=${LISTMONK_INITIAL_EMAIL_REMINDER_ID:-}` to the `backend` service's `environment` block in your Compose file.
+  </Note>
 </ParamField>
 
 <ParamField body="LISTMONK_SECOND_EMAIL_REMINDER_ID" type="string">
   Listmonk transactional template ID for the second event reminder email.
+
+  <Note>
+    This variable is defined in `.env.example` but is not forwarded in the default Compose files. Add it to the `backend` environment block as needed.
+  </Note>
 </ParamField>
 
 <ParamField body="LISTMONK_FINAL_EMAIL_REMINDER_ID" type="string">
   Listmonk transactional template ID for the final event reminder email.
+
+  <Note>
+    This variable is defined in `.env.example` but is not forwarded in the default Compose files. Add it to the `backend` environment block as needed.
+  </Note>
 </ParamField>
 
 ---
@@ -143,7 +155,11 @@ cp config.example.js config.js
 ### Analytics
 
 <ParamField body="VUE_APP_POSTHOG_API_KEY" type="string">
-  PostHog project API key. Leave empty to disable server-side PostHog analytics. See also `posthogApiKey` in `config.js` for the frontend-side key.
+  PostHog project API key for backend analytics. Leave empty to disable. See also `posthogApiKey` in `config.js` for the frontend-side key.
+
+  <Note>
+    This variable is present in `.env.example` but is not forwarded to the backend container in the default Compose files. Add `- VUE_APP_POSTHOG_API_KEY=${VUE_APP_POSTHOG_API_KEY:-}` to the `backend` environment block if you need it.
+  </Note>
 </ParamField>
 
 ---

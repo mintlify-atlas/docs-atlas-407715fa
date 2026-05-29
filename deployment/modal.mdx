@@ -1,10 +1,10 @@
 ---
-title: "Host the Timeful Backend on Modal"
+title: "Run the Timeful Go Backend on Modal Serverless Cloud"
 sidebarTitle: "Modal"
-description: "Run the Timeful Go backend as a serverless long-running container on Modal, keeping one warm instance ready at all times."
+description: "Run the Timeful Go backend as a persistent long-running container on Modal with one warm instance always ready, zero cold-start latency."
 ---
 
-[Modal](https://modal.com) is a serverless cloud platform that can run the Timeful Go backend as a persistent HTTP service. The `modal_backend.py` entrypoint in the repository packages the Go binary built from `Dockerfile.backend` and exposes it over HTTPS. Modal handles infrastructure, scaling, and cold-start behaviour — you only pay for actual compute time.
+[Modal](https://modal.com) is a serverless cloud platform that can run the Timeful Go backend as a persistent HTTP service. The `modal_backend.py` entrypoint in the repository packages the Go binary built from `Dockerfile.modal` and exposes it over HTTPS. Modal handles infrastructure, scaling, and cold-start behaviour — you only pay for actual compute time.
 
 <Note>
   This deployment covers **only the backend**. Your frontend is still deployed separately (e.g., on Vercel — see [Vercel + Railway](/deployment/vercel-railway)) and routes `/api/*` requests to the Modal service URL.
@@ -23,7 +23,7 @@ description: "Run the Timeful Go backend as a serverless long-running container 
 | File | Purpose |
 |------|---------|
 | `modal_backend.py` | Modal app definition — builds the container and starts the Go server |
-| `Dockerfile.backend` | Backend-only Docker image used by Modal for the build |
+| `Dockerfile.modal` | Modal-specific Docker image (Alpine + Python runtime required by Modal) |
 | `modal.env.example` | Template for the environment variables to inject as a Modal secret |
 
 ## Prerequisites
@@ -92,7 +92,7 @@ modal token new
     ```
 
     Modal will:
-    1. Build the Docker image using `Dockerfile.backend`.
+    1. Build the Docker image using `Dockerfile.modal`.
     2. Push the image to Modal's internal registry.
     3. Start the Go server and attach the `timeful-backend-secrets` secret.
     4. Print the public HTTPS URL for your service.

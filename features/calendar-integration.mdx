@@ -1,7 +1,7 @@
 ---
-title: "Connect Your Calendar to Timeful"
+title: "Connect Google, Outlook, and Apple Calendar to Timeful"
 sidebarTitle: "Calendar Integration"
-description: "Link Google Calendar, Microsoft Outlook, or Apple Calendar so Timeful can auto-fill your availability grid from your real schedule — read-only, never writes."
+description: "Link Google Calendar, Microsoft Outlook, or Apple Calendar so Timeful auto-fills your availability grid from your real schedule — read-only, never writes."
 ---
 
 Calendar integration lets participants skip the tedious drag-to-mark step. Once a calendar account is connected, Timeful reads existing events from your calendar and automatically fills in the availability grid — marking you as busy wherever you have conflicting appointments. Timeful only ever **reads** calendar data; it never creates, modifies, or deletes events without your explicit action.
@@ -107,7 +107,7 @@ CalendarAccounts map[string]CalendarAccount `json:"calendarAccounts" bson:"calen
 
 For example, a user with two Google accounts and one Outlook account would have three entries:
 
-```
+```text
 alice@gmail.com_google
 alice@columbia.edu_google
 alice@outlook.com_outlook

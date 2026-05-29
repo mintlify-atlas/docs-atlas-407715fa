@@ -1,5 +1,5 @@
 ---
-title: "Premium Features Unlocked for Self-Hosted Timeful"
+title: "Premium Timeful Features Unlocked on Self-Hosted Deployments"
 sidebarTitle: "Premium Features"
 description: "Every premium Timeful feature is automatically unlocked on self-hosted deployments — no Stripe account or payment processing required out of the box."
 ---
@@ -36,7 +36,7 @@ On the public [timeful.app](https://timeful.app) hosted service, certain advance
 
 ### The `SELF_HOSTED_PREMIUM` Environment Variable
 
-The backend checks `SELF_HOSTED_PREMIUM` on startup using the `IsSelfHostedPremiumEnabled()` utility:
+The backend checks the `SELF_HOSTED_PREMIUM` environment variable at runtime using the `IsSelfHostedPremiumEnabled()` utility:
 
 ```go
 // From server/utils/utils.go

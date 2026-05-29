@@ -1,5 +1,5 @@
 ---
-title: "Run Timeful with Podman and systemd Quadlets"
+title: "Run Timeful Rootlessly with Podman and systemd Quadlets"
 sidebarTitle: "Podman"
 description: "Deploy Timeful rootlessly with Podman Compose or manage it as native systemd services using Podman Quadlets on any systemd-based Linux host."
 ---
@@ -94,6 +94,7 @@ Quadlets are `.container`, `.network`, and `.volume` unit files that Podman tran
     Environment=MONGO_INITDB_DATABASE=schej-it
 
     Network=timeful.network
+    # Remove PublishPort in production to keep MongoDB off the host network
     PublishPort=27017:27017
 
     Volume=timeful-mongodb-data:/data/db
@@ -186,6 +187,30 @@ Quadlets are `.container`, `.network`, and `.volume` unit files that Podman tran
 
     [Install]
     WantedBy=default.target
+    ```
+  </Step>
+  <Step title="Create the volume units">
+    Named volumes referenced in the container units need matching `.volume` files so Podman manages them as quadlet resources.
+
+    `~/.config/containers/systemd/timeful-mongodb-data.volume`:
+
+    ```ini
+    [Volume]
+    VolumeName=timeful-mongodb-data
+    ```
+
+    `~/.config/containers/systemd/timeful-mongodb-config.volume`:
+
+    ```ini
+    [Volume]
+    VolumeName=timeful-mongodb-config
+    ```
+
+    `~/.config/containers/systemd/timeful-backend-logs.volume`:
+
+    ```ini
+    [Volume]
+    VolumeName=timeful-backend-logs
     ```
   </Step>
   <Step title="Create the environment file">
